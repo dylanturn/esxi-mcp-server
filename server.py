@@ -547,14 +547,15 @@ async def streamable_http_endpoint(scope, receive, send):
     provided_key = None
     # Check if authorization or x-api-key headers are present in the decoded headers_dict
     if "authorization" in headers_dict:
-        auth_header = headers_dict.get("authorization")
-        # Extract token from "Bearer <token>" format
-        if auth_header and auth_header.startswith("Bearer "):
-            provided_key = auth_header[7:]  # Remove "Bearer " prefix
-        else:
+        auth_header = headers_dict.get("authorization", "").strip()
+        # Extract token from "Bearer <token>" format (standard) or use direct token (fallback)
+        if auth_header.startswith("Bearer "):
+            provided_key = auth_header[7:].strip()  # Remove "Bearer " prefix and any extra whitespace
+        elif auth_header:
+            # Support direct token in Authorization header for backward compatibility
             provided_key = auth_header
     elif "x-api-key" in headers_dict:
-        provided_key = headers_dict.get("x-api-key")
+        provided_key = headers_dict.get("x-api-key", "").strip()
     
     if config.api_key and provided_key != config.api_key:
         # If the correct API key is not provided, return 401
