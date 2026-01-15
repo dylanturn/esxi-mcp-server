@@ -75,6 +75,51 @@ python server.py -c config.yaml --transport http
 python server.py -c config.yaml --transport stdio
 ```
 
+### MCP Client Configuration
+
+When configuring this server in an MCP client (like Claude Desktop), use the following configuration format in your MCP settings file:
+
+**For stdio transport** (recommended):
+```json
+{
+  "mcpServers": {
+    "esxi": {
+      "command": "python",
+      "args": [
+        "/path/to/esxi-mcp-server/server.py",
+        "-c",
+        "/path/to/config.yaml",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}
+```
+
+**Important**: Each command-line argument must be a separate string in the `args` array. Do not combine arguments like `"-c config.yaml"` or `"--transport stdio"` as single strings.
+
+**Using uv**:
+```json
+{
+  "mcpServers": {
+    "esxi": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/path/to/esxi-mcp-server",
+        "server.py",
+        "-c",
+        "config.yaml",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}
+```
+
 ## API Interface
 
 ### Transport Protocols
