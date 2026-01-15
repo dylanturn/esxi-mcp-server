@@ -70,12 +70,9 @@ def main():
         # Run with HTTP transport (default)
         logging.info("Starting MCP server with HTTP transport on 0.0.0.0:8080")
         
-        # Create ASGI app asynchronously
-        async def create_app():
-            return await create_asgi_app(mcp_server, config)
-        
+        # Create ASGI app
         import asyncio
-        app = asyncio.run(create_app())
+        app = asyncio.run(create_asgi_app(mcp_server, config))
         uvicorn.run(app, host="0.0.0.0", port=8080)
 
 
