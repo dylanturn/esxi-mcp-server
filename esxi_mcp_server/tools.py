@@ -172,6 +172,26 @@ class ToolHandlers:
         return self.manager.upload_file_to_datastore(datastore_name, local_file_path,
                                                      remote_file_path)
     
+    def deploy_ovf(self, ovf_path: str, vmdk_path: str, vm_name: str = None,
+                   datastore_name: str = None, resource_pool_name: str = None) -> str:
+        """Deploy a VM from OVF and VMDK files."""
+        self._check_auth()
+        return self.manager.deploy_ovf(ovf_path, vmdk_path, vm_name,
+                                      datastore_name, resource_pool_name)
+    
+    def deploy_ova(self, ova_path: str, vm_name: str = None,
+                   datastore_name: str = None, resource_pool_name: str = None) -> str:
+        """Deploy a VM from an OVA file."""
+        self._check_auth()
+        return self.manager.deploy_ova(ova_path, vm_name, datastore_name, resource_pool_name)
+    
+    def wait_for_updates(self, object_type: str, properties: list,
+                        max_wait_seconds: int = 30, max_iterations: int = 1) -> dict:
+        """Wait for property updates on vSphere objects."""
+        self._check_auth()
+        return self.manager.wait_for_updates(object_type, properties,
+                                            max_wait_seconds, max_iterations)
+    
     def vm_performance_resource(self, vm_name: str) -> dict:
         """Retrieve CPU, memory, storage, and network usage for the specified virtual machine."""
         self._check_auth()

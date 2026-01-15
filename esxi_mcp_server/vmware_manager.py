@@ -993,3 +993,369 @@ class VMwareManager:
             return f"Successfully uploaded file to {remote_file_path} on datastore '{datastore_name}'"
         else:
             raise Exception(f"Failed to upload file. HTTP status: {resp.status_code}")
+
+    def deploy_ovf(self, ovf_path: str, vmdk_path: str, vm_name: str = None,
+                   datastore_name: str = None, resource_pool_name: str = None) -> str:
+        """Deploy a VM from OVF and VMDK files."""
+        import os
+        from threading import Thread
+        from time import sleep
+        
+        # Read OVF descriptor
+        if not os.path.exists(ovf_path):
+            raise Exception(f"OVF file not found: {ovf_path}")
+        
+        with open(ovf_path, 'r') as f:
+            ovf_descriptor = f.read()
+        
+        # Determine datastore
+        datastore = self.datastore_obj
+        if datastore_name:
+            datastore = None
+            for ds in self.datacenter_obj.datastoreFolder.childEntity:
+                if isinstance(ds, vim.Datastore) and ds.name == datastore_name:
+                    datastore = ds
+                    break
+            if not datastore:
+                raise Exception(f"Datastore '{datastore_name}' not found")
+        
+        # Determine resource pool
+        resource_pool = self.resource_pool
+        if resource_pool_name:
+            # Search for specific resource pool
+            container = self.content.viewManager.CreateContainerView(
+                self.datacenter_obj, [vim.ResourcePool], True)
+            for rp in container.view:
+                if rp.name == resource_pool_name:
+                    resource_pool = rp
+                    break
+            container.Destroy()
+        
+        # Create import spec
+        ovf_manager = self.content.ovfManager
+        spec_params = vim.OvfManager.CreateImportSpecParams()
+        
+        if vm_name:
+            spec_params.entityName = vm_name
+        
+        import_spec = ovf_manager.CreateImportSpec(
+            ovf_descriptor, resource_pool, datastore, spec_params)
+        
+        if import_spec.error:
+            errors = [str(e) for e in import_spec.error]
+            raise Exception(f"OVF import spec errors: {', '.join(errors)}")
+        
+        # Import the VApp
+        lease = resource_pool.ImportVApp(
+            import_spec.importSpec, self.datacenter_obj.vmFolder)
+        
+        # Wait for lease to be ready
+        while lease.state == vim.HttpNfcLease.State.initializing:
+            sleep(1)
+        
+        if lease.state == vim.HttpNfcLease.State.error:
+            raise Exception(f"Lease error: {lease.error}")
+        
+        if lease.state == vim.HttpNfcLease.State.ready:
+            # Upload VMDK
+            url = lease.info.deviceUrl[0].url.replace('*', self.config.vcenter_host)
+            
+            def keep_lease_alive(lease_obj):
+                while lease_obj.state not in [vim.HttpNfcLease.State.done, vim.HttpNfcLease.State.error]:
+                    sleep(5)
+                    try:
+                        lease_obj.HttpNfcLeaseProgress(50)
+                    except:
+                        return
+            
+            # Start keepalive thread
+            keepalive_thread = Thread(target=keep_lease_alive, args=(lease,))
+            keepalive_thread.start()
+            
+            # Upload VMDK file
+            import subprocess
+            curl_cmd = [
+                "curl", "-Ss", "-X", "POST", "--insecure",
+                "-T", vmdk_path,
+                "-H", "Content-Type: application/x-vnd.vmware-streamVmdk",
+                url
+            ]
+            result = subprocess.run(curl_cmd, capture_output=True)
+            
+            if result.returncode == 0:
+                lease.HttpNfcLeaseComplete()
+                keepalive_thread.join()
+                logging.info(f"Successfully deployed OVF: {vm_name or 'VM'}")
+                return f"Successfully deployed OVF as '{vm_name or 'VM'}'"
+            else:
+                lease.Abort()
+                raise Exception(f"Failed to upload VMDK: {result.stderr.decode()}")
+        
+        raise Exception("Lease did not become ready")
+
+    def deploy_ova(self, ova_path: str, vm_name: str = None,
+                   datastore_name: str = None, resource_pool_name: str = None) -> str:
+        """Deploy a VM from an OVA file."""
+        import os
+        import tarfile
+        import ssl
+        import time
+        from threading import Timer
+        from six.moves.urllib.request import Request, urlopen
+        
+        # Check if OVA exists
+        if not os.path.exists(ova_path):
+            raise Exception(f"OVA file not found: {ova_path}")
+        
+        # Open OVA (tarball)
+        tar = tarfile.open(ova_path)
+        
+        # Extract OVF descriptor
+        ovf_file = None
+        for member in tar.getmembers():
+            if member.name.endswith('.ovf'):
+                ovf_file = tar.extractfile(member)
+                break
+        
+        if not ovf_file:
+            raise Exception("No OVF descriptor found in OVA")
+        
+        ovf_descriptor = ovf_file.read().decode()
+        
+        # Determine datastore
+        datastore = self.datastore_obj
+        if datastore_name:
+            datastore = None
+            for ds in self.datacenter_obj.datastoreFolder.childEntity:
+                if isinstance(ds, vim.Datastore) and ds.name == datastore_name:
+                    datastore = ds
+                    break
+            if not datastore:
+                raise Exception(f"Datastore '{datastore_name}' not found")
+        
+        # Determine resource pool
+        resource_pool = self.resource_pool
+        if resource_pool_name:
+            container = self.content.viewManager.CreateContainerView(
+                self.datacenter_obj, [vim.ResourcePool], True)
+            for rp in container.view:
+                if rp.name == resource_pool_name:
+                    resource_pool = rp
+                    break
+            container.Destroy()
+        
+        # Create import spec
+        ovf_manager = self.content.ovfManager
+        spec_params = vim.OvfManager.CreateImportSpecParams()
+        
+        if vm_name:
+            spec_params.entityName = vm_name
+        
+        import_spec = ovf_manager.CreateImportSpec(
+            ovf_descriptor, resource_pool, datastore, spec_params)
+        
+        if import_spec.error:
+            errors = [str(e) for e in import_spec.error]
+            raise Exception(f"OVA import spec errors: {', '.join(errors)}")
+        
+        # Import the VApp
+        lease = resource_pool.ImportVApp(
+            import_spec.importSpec, self.datacenter_obj.vmFolder)
+        
+        # Wait for lease to be ready
+        while lease.state == vim.HttpNfcLease.State.initializing:
+            time.sleep(1)
+        
+        if lease.state == vim.HttpNfcLease.State.error:
+            raise Exception(f"Lease error: {lease.error}")
+        
+        if lease.state != vim.HttpNfcLease.State.ready:
+            raise Exception("Lease did not become ready")
+        
+        # Upload disk files
+        def keep_lease_alive(lease_obj):
+            while True:
+                time.sleep(5)
+                try:
+                    lease_obj.HttpNfcLeaseProgress(50)
+                    if lease_obj.state == vim.HttpNfcLease.State.done:
+                        return
+                except:
+                    return
+        
+        # Start keepalive
+        keepalive_timer = Timer(5, keep_lease_alive, args=(lease,))
+        keepalive_timer.start()
+        
+        try:
+            # Upload each disk file
+            for file_item in import_spec.fileItem:
+                # Find disk in tarball
+                disk_file = None
+                for member in tar.getmembers():
+                    if member.name == file_item.path:
+                        disk_file = tar.extractfile(member)
+                        break
+                
+                if disk_file:
+                    # Find device URL
+                    device_url = None
+                    for dev_url in lease.info.deviceUrl:
+                        if dev_url.importKey == file_item.deviceId:
+                            device_url = dev_url
+                            break
+                    
+                    if device_url:
+                        url = device_url.url.replace('*', self.config.vcenter_host)
+                        
+                        # Get file size
+                        file_size = member.size
+                        
+                        # Upload
+                        headers = {'Content-length': str(file_size)}
+                        if hasattr(ssl, '_create_unverified_context'):
+                            ssl_context = ssl._create_unverified_context()
+                        else:
+                            ssl_context = None
+                        
+                        req = Request(url, disk_file, headers)
+                        urlopen(req, context=ssl_context)
+            
+            lease.Complete()
+            keepalive_timer.cancel()
+            tar.close()
+            
+            logging.info(f"Successfully deployed OVA: {vm_name or 'VM'}")
+            return f"Successfully deployed OVA as '{vm_name or 'VM'}'"
+            
+        except Exception as ex:
+            lease.Abort()
+            keepalive_timer.cancel()
+            tar.close()
+            raise Exception(f"Failed to deploy OVA: {str(ex)}")
+
+    def wait_for_updates(self, object_type: str, properties: list, 
+                        max_wait_seconds: int = 30, max_iterations: int = 1) -> Dict[str, Any]:
+        """Wait for property updates on vSphere objects."""
+        from pyVmomi import vmodl
+        
+        # Parse object type
+        try:
+            mo_type = getattr(vim, object_type, None)
+            if mo_type is None:
+                raise Exception(f"Invalid object type: {object_type}")
+        except:
+            raise Exception(f"Invalid object type: {object_type}")
+        
+        # Create property filter spec
+        filter_spec = vmodl.query.PropertyCollector.FilterSpec()
+        
+        # Create object spec with traversal
+        obj_spec = vmodl.query.PropertyCollector.ObjectSpec(
+            obj=self.content.rootFolder,
+            selectSet=self._build_traversal_spec()
+        )
+        filter_spec.objectSet = [obj_spec]
+        
+        # Create property spec
+        prop_spec = vmodl.query.PropertyCollector.PropertySpec(
+            type=mo_type,
+            all=False
+        )
+        prop_spec.pathSet.extend(properties)
+        filter_spec.propSet = [prop_spec]
+        
+        # Create filter
+        prop_collector = self.content.propertyCollector
+        pc_filter = prop_collector.CreateFilter(filter_spec, True)
+        
+        try:
+            # Create wait options
+            wait_opts = vmodl.query.PropertyCollector.WaitOptions()
+            wait_opts.maxWaitSeconds = max_wait_seconds
+            
+            version = ''
+            results = []
+            iterations = 0
+            
+            while iterations < max_iterations:
+                # Wait for updates
+                update_set = prop_collector.WaitForUpdatesEx(version, wait_opts)
+                
+                if update_set is None:
+                    # Timeout, continue
+                    iterations += 1
+                    continue
+                
+                # Process updates
+                for filter_set in update_set.filterSet:
+                    for object_set in filter_set.objectSet:
+                        obj_ref = str(object_set.obj).strip("'")
+                        kind = object_set.kind
+                        
+                        if kind in ('enter', 'modify'):
+                            changes = {}
+                            for change in object_set.changeSet:
+                                changes[change.name] = str(change.val) if change.val else None
+                            
+                            results.append({
+                                "object": obj_ref,
+                                "kind": kind,
+                                "changes": changes
+                            })
+                        elif kind == 'leave':
+                            results.append({
+                                "object": obj_ref,
+                                "kind": "removed"
+                            })
+                
+                version = update_set.version
+                iterations += 1
+            
+            return {
+                "status": "success",
+                "iterations": iterations,
+                "updates": results
+            }
+            
+        finally:
+            # Clean up filter
+            pc_filter.Destroy()
+
+    def _build_traversal_spec(self):
+        """Build traversal spec for property collector."""
+        from pyVmomi import vmodl
+        
+        # Traversal spec for folders
+        folder_to_child = vmodl.query.PropertyCollector.TraversalSpec(
+            name='folderToChild',
+            type=vim.Folder,
+            path='childEntity',
+            skip=False
+        )
+        
+        # Traversal spec for datacenter to VM folder
+        dc_to_vmfolder = vmodl.query.PropertyCollector.TraversalSpec(
+            name='dcToVmFolder',
+            type=vim.Datacenter,
+            path='vmFolder',
+            skip=False,
+            selectSet=[vmodl.query.PropertyCollector.SelectionSpec(name='folderToChild')]
+        )
+        
+        # Traversal spec for datacenter to host folder
+        dc_to_hostfolder = vmodl.query.PropertyCollector.TraversalSpec(
+            name='dcToHostFolder',
+            type=vim.Datacenter,
+            path='hostFolder',
+            skip=False,
+            selectSet=[vmodl.query.PropertyCollector.SelectionSpec(name='folderToChild')]
+        )
+        
+        folder_to_child.selectSet = [
+            vmodl.query.PropertyCollector.SelectionSpec(name='folderToChild'),
+            vmodl.query.PropertyCollector.SelectionSpec(name='dcToVmFolder'),
+            vmodl.query.PropertyCollector.SelectionSpec(name='dcToHostFolder')
+        ]
+        
+        return [folder_to_child, dc_to_vmfolder, dc_to_hostfolder]

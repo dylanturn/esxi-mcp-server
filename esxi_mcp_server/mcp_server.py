@@ -311,6 +311,49 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                 },
                 "required": ["datastore_name", "local_file_path", "remote_file_path"]
             }
+        ),
+        "deploy_ovf": types.Tool(
+            name="deploy_ovf",
+            description="Deploy a VM from OVF and VMDK files",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ovf_path": {"type": "string", "description": "Path to OVF file"},
+                    "vmdk_path": {"type": "string", "description": "Path to VMDK file"},
+                    "vm_name": {"type": "string", "description": "Name for the new VM (optional)"},
+                    "datastore_name": {"type": "string", "description": "Target datastore (optional)"},
+                    "resource_pool_name": {"type": "string", "description": "Target resource pool (optional)"}
+                },
+                "required": ["ovf_path", "vmdk_path"]
+            }
+        ),
+        "deploy_ova": types.Tool(
+            name="deploy_ova",
+            description="Deploy a VM from an OVA file",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ova_path": {"type": "string", "description": "Path to OVA file"},
+                    "vm_name": {"type": "string", "description": "Name for the new VM (optional)"},
+                    "datastore_name": {"type": "string", "description": "Target datastore (optional)"},
+                    "resource_pool_name": {"type": "string", "description": "Target resource pool (optional)"}
+                },
+                "required": ["ova_path"]
+            }
+        ),
+        "wait_for_updates": types.Tool(
+            name="wait_for_updates",
+            description="Wait for property updates on vSphere objects",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "object_type": {"type": "string", "description": "Object type (e.g., 'VirtualMachine', 'Host')"},
+                    "properties": {"type": "array", "items": {"type": "string"}, "description": "Properties to monitor"},
+                    "max_wait_seconds": {"type": "integer", "description": "Max wait time per iteration", "default": 30},
+                    "max_iterations": {"type": "integer", "description": "Max number of iterations", "default": 1}
+                },
+                "required": ["object_type", "properties"]
+            }
         )
     }
     
@@ -344,6 +387,9 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
         "execute_program_in_vm": lambda args: tool_handlers.execute_program_in_vm(**args),
         "upload_file_to_vm": lambda args: tool_handlers.upload_file_to_vm(**args),
         "upload_file_to_datastore": lambda args: tool_handlers.upload_file_to_datastore(**args),
+        "deploy_ovf": lambda args: tool_handlers.deploy_ovf(**args),
+        "deploy_ova": lambda args: tool_handlers.deploy_ova(**args),
+        "wait_for_updates": lambda args: tool_handlers.wait_for_updates(**args),
     }
     
     resources = {
