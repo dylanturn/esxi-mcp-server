@@ -825,3 +825,171 @@ class VMwareManager:
             result.append(snap_info)
             if snapshot.childSnapshotList:
                 self._collect_snapshots(snapshot.childSnapshotList, result, level + 1)
+
+    def execute_program_in_vm(self, vm_name: str, username: str, password: str, 
+                             program_path: str, program_arguments: str = "") -> Dict[str, Any]:
+        """Execute a program inside a VM using VMware Tools."""
+        import time
+        import re
+        
+        vm = self.find_vm(vm_name)
+        if not vm:
+            raise Exception(f"VM {vm_name} not found")
+        
+        # Check VMware Tools status
+        tools_status = vm.guest.toolsStatus
+        if tools_status in ('toolsNotInstalled', 'toolsNotRunning'):
+            raise Exception(
+                "VMware Tools is either not running or not installed. "
+                "Ensure VMware Tools is running before executing programs.")
+        
+        # Create credentials
+        creds = vim.vm.guest.NamePasswordAuthentication(
+            username=username, password=password)
+        
+        # Get process manager
+        process_manager = self.content.guestOperationsManager.processManager
+        
+        # Create program spec
+        if program_arguments:
+            program_spec = vim.vm.guest.ProcessManager.ProgramSpec(
+                programPath=program_path,
+                arguments=program_arguments)
+        else:
+            program_spec = vim.vm.guest.ProcessManager.ProgramSpec(
+                programPath=program_path)
+        
+        # Start the program
+        pid = process_manager.StartProgramInGuest(vm, creds, program_spec)
+        
+        if pid > 0:
+            logging.info(f"Program started in VM '{vm_name}', PID: {pid}")
+            
+            # Wait for program to complete (with timeout)
+            max_wait = 30  # seconds
+            wait_count = 0
+            while wait_count < max_wait:
+                processes = process_manager.ListProcessesInGuest(vm, creds, [pid])
+                if processes:
+                    exit_code = processes[0].exitCode
+                    # Check if process has completed
+                    if exit_code is not None:
+                        return {
+                            "pid": pid,
+                            "exit_code": exit_code,
+                            "status": "completed",
+                            "success": exit_code == 0
+                        }
+                time.sleep(1)
+                wait_count += 1
+            
+            return {
+                "pid": pid,
+                "status": "running",
+                "message": "Program is still running after timeout"
+            }
+        else:
+            raise Exception("Failed to start program in VM")
+
+    def upload_file_to_vm(self, vm_name: str, username: str, password: str,
+                         local_file_path: str, remote_file_path: str) -> str:
+        """Upload a file to a VM using VMware Tools."""
+        import re
+        import requests
+        
+        vm = self.find_vm(vm_name)
+        if not vm:
+            raise Exception(f"VM {vm_name} not found")
+        
+        # Check VMware Tools status
+        tools_status = vm.guest.toolsStatus
+        if tools_status in ('toolsNotInstalled', 'toolsNotRunning'):
+            raise Exception(
+                "VMware Tools is either not running or not installed.")
+        
+        # Create credentials
+        creds = vim.vm.guest.NamePasswordAuthentication(
+            username=username, password=password)
+        
+        # Read the local file
+        with open(local_file_path, 'rb') as f:
+            file_data = f.read()
+        
+        # Get file manager
+        file_manager = self.content.guestOperationsManager.fileManager
+        
+        # Create file attributes
+        file_attribute = vim.vm.guest.FileManager.FileAttributes()
+        
+        # Initiate file transfer
+        url = file_manager.InitiateFileTransferToGuest(
+            vm, creds, remote_file_path, file_attribute, len(file_data), True)
+        
+        # Fix the URL (replace wildcard with actual host)
+        url = re.sub(r"^https://\*:", f"https://{self.config.vcenter_host}:", url)
+        
+        # Upload the file
+        resp = requests.put(url, data=file_data, verify=False)
+        
+        if resp.status_code == 200:
+            logging.info(f"File uploaded to VM '{vm_name}': {remote_file_path}")
+            return f"Successfully uploaded file to {remote_file_path} in VM '{vm_name}'"
+        else:
+            raise Exception(f"Failed to upload file. HTTP status: {resp.status_code}")
+
+    def upload_file_to_datastore(self, datastore_name: str, local_file_path: str,
+                                 remote_file_path: str) -> str:
+        """Upload a file to a datastore."""
+        import requests
+        
+        # Find the datastore
+        datastore = None
+        container = self.content.viewManager.CreateContainerView(
+            self.content.rootFolder, [vim.Datastore], True)
+        for ds in container.view:
+            if ds.name == datastore_name:
+                datastore = ds
+                break
+        container.Destroy()
+        
+        if not datastore:
+            raise Exception(f"Datastore '{datastore_name}' not found")
+        
+        # Build the URL
+        if not remote_file_path.startswith("/"):
+            remote_file_path = "/" + remote_file_path
+        
+        resource = "/folder" + remote_file_path
+        params = {
+            "dsName": datastore.name,
+            "dcPath": self.datacenter_obj.name
+        }
+        http_url = f"https://{self.config.vcenter_host}:443{resource}"
+        
+        # Get the session cookie
+        client_cookie = self.si._stub.cookie
+        cookie_name = client_cookie.split("=", 1)[0]
+        cookie_value = client_cookie.split("=", 1)[1].split(";", 1)[0]
+        cookie_path = client_cookie.split("=", 1)[1].split(";", 1)[1].split(";", 1)[0].lstrip()
+        cookie_text = " " + cookie_value + "; $" + cookie_path
+        cookie = {cookie_name: cookie_text}
+        
+        # Set headers
+        headers = {'Content-Type': 'application/octet-stream'}
+        
+        # Upload the file
+        with open(local_file_path, "rb") as file_data:
+            resp = requests.put(
+                http_url,
+                params=params,
+                data=file_data,
+                headers=headers,
+                cookies=cookie,
+                verify=False
+            )
+        
+        if resp.status_code in (200, 201):
+            logging.info(f"File uploaded to datastore '{datastore_name}': {remote_file_path}")
+            return f"Successfully uploaded file to {remote_file_path} on datastore '{datastore_name}'"
+        else:
+            raise Exception(f"Failed to upload file. HTTP status: {resp.status_code}")

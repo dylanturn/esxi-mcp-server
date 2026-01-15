@@ -4,3 +4,5 @@ uvicorn>=0.15.0
 anyio>=3.0.0
 mcp
 pytest>=7.0.0
+requests>=2.25.0
+six>=1.15.0

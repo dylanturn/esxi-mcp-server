@@ -151,6 +151,27 @@ class ToolHandlers:
         self._check_auth()
         return self.manager.remove_all_snapshots(vm_name)
     
+    def execute_program_in_vm(self, vm_name: str, username: str, password: str,
+                             program_path: str, program_arguments: str = "") -> dict:
+        """Execute a program inside a VM."""
+        self._check_auth()
+        return self.manager.execute_program_in_vm(vm_name, username, password,
+                                                 program_path, program_arguments)
+    
+    def upload_file_to_vm(self, vm_name: str, username: str, password: str,
+                         local_file_path: str, remote_file_path: str) -> str:
+        """Upload a file to a VM."""
+        self._check_auth()
+        return self.manager.upload_file_to_vm(vm_name, username, password,
+                                             local_file_path, remote_file_path)
+    
+    def upload_file_to_datastore(self, datastore_name: str, local_file_path: str,
+                                 remote_file_path: str) -> str:
+        """Upload a file to a datastore."""
+        self._check_auth()
+        return self.manager.upload_file_to_datastore(datastore_name, local_file_path,
+                                                     remote_file_path)
+    
     def vm_performance_resource(self, vm_name: str) -> dict:
         """Retrieve CPU, memory, storage, and network usage for the specified virtual machine."""
         self._check_auth()

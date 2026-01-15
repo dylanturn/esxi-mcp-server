@@ -268,6 +268,49 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                 },
                 "required": ["vm_name"]
             }
+        ),
+        "execute_program_in_vm": types.Tool(
+            name="execute_program_in_vm",
+            description="Execute a program inside a VM using VMware Tools",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "vm_name": {"type": "string", "description": "Name of the VM"},
+                    "username": {"type": "string", "description": "Guest OS username"},
+                    "password": {"type": "string", "description": "Guest OS password"},
+                    "program_path": {"type": "string", "description": "Full path to the program in guest OS"},
+                    "program_arguments": {"type": "string", "description": "Program arguments (optional)", "default": ""}
+                },
+                "required": ["vm_name", "username", "password", "program_path"]
+            }
+        ),
+        "upload_file_to_vm": types.Tool(
+            name="upload_file_to_vm",
+            description="Upload a file to a VM using VMware Tools",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "vm_name": {"type": "string", "description": "Name of the VM"},
+                    "username": {"type": "string", "description": "Guest OS username"},
+                    "password": {"type": "string", "description": "Guest OS password"},
+                    "local_file_path": {"type": "string", "description": "Local file path to upload"},
+                    "remote_file_path": {"type": "string", "description": "Destination path in guest OS"}
+                },
+                "required": ["vm_name", "username", "password", "local_file_path", "remote_file_path"]
+            }
+        ),
+        "upload_file_to_datastore": types.Tool(
+            name="upload_file_to_datastore",
+            description="Upload a file directly to a datastore",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "datastore_name": {"type": "string", "description": "Name of the datastore"},
+                    "local_file_path": {"type": "string", "description": "Local file path to upload"},
+                    "remote_file_path": {"type": "string", "description": "Destination path on datastore"}
+                },
+                "required": ["datastore_name", "local_file_path", "remote_file_path"]
+            }
         )
     }
     
@@ -298,6 +341,9 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
         "revert_snapshot": lambda args: tool_handlers.revert_snapshot(**args),
         "list_snapshots": lambda args: tool_handlers.list_snapshots(**args),
         "remove_all_snapshots": lambda args: tool_handlers.remove_all_snapshots(**args),
+        "execute_program_in_vm": lambda args: tool_handlers.execute_program_in_vm(**args),
+        "upload_file_to_vm": lambda args: tool_handlers.upload_file_to_vm(**args),
+        "upload_file_to_datastore": lambda args: tool_handlers.upload_file_to_datastore(**args),
     }
     
     resources = {
