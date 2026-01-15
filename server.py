@@ -9,7 +9,6 @@ from typing import Optional, Dict, Any
 
 # MCP protocol related imports
 from mcp.server.lowlevel import Server  # MCP server base class
-from mcp.server.sse import SseServerTransport  # SSE transport support
 from mcp.server.streamable_http import StreamableHTTPServerTransport  # Streamable HTTP transport support
 from mcp import types  # MCP type definitions
 
@@ -533,96 +532,10 @@ mcp_server.capabilities = {
     "resources": {"listChanged": True}
 }
 
-# Maintain a global SSE transport instance for sending events during POST request processing
-active_transport: Optional[SseServerTransport] = None
-
-# Maintain a global StreamableHTTP transport instance for the /message endpoint
+# Maintain a global StreamableHTTP transport instance
 streamable_http_transport: Optional[StreamableHTTPServerTransport] = None
 streamable_http_task: Optional[asyncio.Task] = None
 streamable_http_lock = asyncio.Lock()
-
-# SSE initialization request handler (HTTP GET /sse)
-async def sse_endpoint(scope, receive, send):
-    """Handle SSE connection initialization requests. Establish an MCP SSE session."""
-    global active_transport
-    # Construct response headers to establish an event stream
-    headers = [(b"content-type", b"text/event-stream")]
-    # Verify API key: Retrieve from request headers 'Authorization' or 'X-API-Key'
-    headers_dict = {k.lower().decode(): v.decode() for (k, v) in scope.get("headers", [])}
-    provided_key = None
-    # Check if authorization or x-api-key headers are present in the decoded headers_dict
-    if "authorization" in headers_dict:
-        provided_key = headers_dict.get("authorization")
-    elif "x-api-key" in headers_dict:
-        provided_key = headers_dict.get("x-api-key")
-    if config.api_key and provided_key != f"Bearer {config.api_key}" and provided_key != config.api_key:
-        # If the correct API key is not provided, return 401
-        await send({"type": "http.response.start", "status": 401, "headers": [(b"content-type", b"text/plain")]})
-        await send({"type": "http.response.body", "body": b"Unauthorized"})
-        logging.warning("No valid API key provided, rejecting SSE connection")
-        return
-
-    # Establish SSE transport and connect to the MCP Server
-    active_transport = SseServerTransport("/sse/messages")
-    logging.info("Established new SSE session")
-    # Send SSE response headers to the client, preparing to start sending events
-    await send({"type": "http.response.start", "status": 200, "headers": headers})
-    try:
-        async with active_transport.connect_sse(scope, receive, send) as (read_stream, write_stream):
-            init_opts = mcp_server.create_initialization_options()
-            # Run MCP Server, passing the read/write streams to the Server
-            await mcp_server.run(read_stream, write_stream, init_opts)
-    except Exception as e:
-        logging.error(f"SSE session encountered an error: {e}")
-    finally:
-        active_transport = None
-    # SSE session ended, send an empty message to indicate completion
-    await send({"type": "http.response.body", "body": b"", "more_body": False})
-
-# JSON-RPC message handler (HTTP POST /sse/messages)
-async def messages_endpoint(scope, receive, send):
-    """Handle JSON-RPC requests sent by the client (via POST)."""
-    global active_transport
-    # Read request body data
-    body_bytes = b''
-    more_body = True
-    while more_body:
-        event = await receive()
-        if event["type"] == "http.request":
-            body_bytes += event.get("body", b'')
-            more_body = event.get("more_body", False)
-    # Parse JSON-RPC request
-    try:
-        body_str = body_bytes.decode('utf-8')
-        msg = json.loads(body_str)
-    except Exception as e:
-        logging.error(f"JSON parsing failed: {e}")
-        await send({"type": "http.response.start", "status": 400,
-                    "headers": [(b"content-type", b"text/plain")]})
-        await send({"type": "http.response.body", "body": b"Invalid JSON"})
-        return
-
-    # Only accept requests sent through an established SSE transport
-    if not active_transport:
-        await send({"type": "http.response.start", "status": 400,
-                    "headers": [(b"content-type", b"text/plain")]})
-        await send({"type": "http.response.body", "body": b"No active session"})
-        return
-
-    # Pass the POST request content to active_transport to trigger the corresponding MCP Server operation
-    try:
-        # Handle the POST message through SseServerTransport, which injects the request into the MCP session
-        await active_transport.handle_post(scope, body_bytes)
-        status = 200
-        response_body = b""
-    except Exception as e:
-        logging.error(f"Error handling POST message: {e}")
-        status = 500
-        response_body = str(e).encode('utf-8')
-    # Reply to the client with HTTP status
-    await send({"type": "http.response.start", "status": status,
-                "headers": [(b"content-type", b"text/plain")]})
-    await send({"type": "http.response.body", "body": response_body})
 
 # Streamable HTTP message handler (HTTP GET or POST /message)
 async def streamable_http_endpoint(scope, receive, send):
@@ -689,23 +602,7 @@ async def app(scope, receive, send):
     if scope["type"] == "http":
         path = scope.get("path", "")
         method = scope.get("method", "").upper()
-        if path == "/sse" and method == "GET":
-            # SSE initialization request
-            await sse_endpoint(scope, receive, send)
-        elif path == "/sse/messages" and method in ("POST", "OPTIONS"):
-            # JSON-RPC message request; handle CORS preflight OPTIONS request
-            if method == "OPTIONS":
-                # Return allowed methods
-                headers = [
-                    (b"access-control-allow-methods", b"POST, OPTIONS"),
-                    (b"access-control-allow-headers", b"Content-Type, Authorization, X-API-Key"),
-                    (b"access-control-allow-origin", b"*")
-                ]
-                await send({"type": "http.response.start", "status": 204, "headers": headers})
-                await send({"type": "http.response.body", "body": b""})
-            else:
-                await messages_endpoint(scope, receive, send)
-        elif path == "/message" and method in ("GET", "POST", "OPTIONS"):
+        if path == "/message" and method in ("GET", "POST", "OPTIONS"):
             # Streamable HTTP endpoint for MCP
             if method == "OPTIONS":
                 # Return allowed methods for CORS

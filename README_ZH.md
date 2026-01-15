@@ -5,9 +5,8 @@
 ## 功能特性
 
 - 支持 ESXi 和 vCenter Server 连接
-- 支持多种 MCP 传输协议：
-  - **Streamable HTTP**（推荐）- 现代 HTTP 传输协议，位于 `/message` 端点
-  - **SSE**（Server-Sent Events）- 传统 SSE 传输，位于 `/sse` 端点
+- 现代 MCP 传输协议：
+  - **Streamable HTTP** - HTTP 传输协议，位于 `/message` 端点
 - RESTful API 接口，支持 JSON-RPC
 - 支持 API 密钥认证
 - 完整的虚拟机生命周期管理
@@ -71,18 +70,11 @@ python server.py -c config.yaml
 
 ### 传输协议
 
-服务器支持两种 MCP 传输协议：
+服务器使用现代 **Streamable HTTP** MCP 传输协议：
 
-1. **Streamable HTTP（推荐）**
-   - 端点：`/message`
-   - 方法：`GET`（流式响应）、`POST`（请求）
-   - 现代 HTTP 传输协议
-   - 与现代 MCP 客户端兼容性更好
-
-2. **SSE（Server-Sent Events）- 传统方式**
-   - 端点：`/sse`（GET）和 `/sse/messages`（POST）
-   - 传统的 SSE 传输方式
-   - 保留用于向后兼容
+- **端点**：`/message`
+- **方法**：`GET`（流式响应）、`POST`（请求）
+- 现代 HTTP 传输协议，完全符合 MCP 规范
 
 ### 认证
 

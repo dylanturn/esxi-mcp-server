@@ -5,9 +5,8 @@ A VMware ESXi/vCenter management server based on MCP (Model Control Protocol), p
 ## Features
 
 - Support for ESXi and vCenter Server connections
-- Multiple MCP transport protocols:
-  - **Streamable HTTP** (recommended) - Modern HTTP-based transport at `/message` endpoint
-  - **SSE** (Server-Sent Events) - Legacy SSE transport at `/sse` endpoint
+- Modern MCP transport protocol:
+  - **Streamable HTTP** - HTTP-based transport at `/message` endpoint
 - RESTful API interface with JSON-RPC support
 - API key authentication
 - Complete virtual machine lifecycle management
@@ -69,20 +68,13 @@ python server.py -c config.yaml
 
 ## API Interface
 
-### Transport Protocols
+### Transport Protocol
 
-The server supports two MCP transport protocols:
+The server uses the modern **Streamable HTTP** MCP transport protocol:
 
-1. **Streamable HTTP (Recommended)**
-   - Endpoint: `/message`
-   - Methods: `GET` (for streaming responses), `POST` (for requests)
-   - Modern HTTP-based transport protocol
-   - Better compatibility with modern MCP clients
-
-2. **SSE (Server-Sent Events) - Legacy**
-   - Endpoints: `/sse` (GET) and `/sse/messages` (POST)
-   - Traditional SSE-based transport
-   - Maintained for backward compatibility
+- **Endpoint**: `/message`
+- **Methods**: `GET` (for streaming responses), `POST` (for requests)
+- Modern HTTP-based transport protocol with full MCP specification compliance
 
 ### Authentication
 
@@ -194,9 +186,10 @@ Issues and Pull Requests are welcome!
 ## Changelog
 
 ### v0.0.2
-- Added Streamable HTTP transport support (`/message` endpoint)
-- Enhanced MCP protocol compatibility with modern clients
-- Maintained backward compatibility with SSE transport
+- **BREAKING CHANGE**: Replaced deprecated SSE transport with modern Streamable HTTP transport
+- MCP endpoint now at `/message` instead of `/sse` and `/sse/messages`
+- Enhanced MCP protocol compliance with HTTP-based transport
+- Improved concurrency handling and error management
 
 ### v0.0.1
 - Initial release
