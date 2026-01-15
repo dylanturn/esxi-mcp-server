@@ -521,17 +521,46 @@ resources = {
     )
 }
 
-# Add tools and resources to the MCP Server object
-for name, tool in tools.items():
-    setattr(mcp_server, f"tool_{name}", tool)
-for name, res in resources.items():
-    setattr(mcp_server, f"resource_{name}", res)
+# Register tool handlers using decorators
+@mcp_server.list_tools()
+async def list_tools_handler():
+    """List all available tools."""
+    return list(tools.values())
 
-# Set the MCP Server capabilities, declaring that the tools and resources list is available
-mcp_server.capabilities = {
-    "tools": {"listChanged": True},
-    "resources": {"listChanged": True}
-}
+@mcp_server.call_tool()
+async def call_tool_handler(name: str, arguments: dict):
+    """Handle tool calls."""
+    if name not in tools:
+        raise ValueError(f"Unknown tool: {name}")
+    
+    tool = tools[name]
+    return tool.handler(arguments)
+
+# Register resource handlers
+@mcp_server.list_resources()
+async def list_resources_handler():
+    """List all available resources."""
+    return list(resources.values())
+
+@mcp_server.read_resource()
+async def read_resource_handler(uri: str):
+    """Handle resource reads."""
+    # Parse URI to extract resource name and parameters
+    for resource_name, resource in resources.items():
+        if uri.startswith(resource.uri.split("{")[0]):
+            # Extract parameters from URI
+            # For vmstats://{vm_name}, extract vm_name
+            if resource_name == "vmStats":
+                vm_name = uri.replace("vmstats://", "")
+                result = resource.handler({"vm_name": vm_name})
+                # Return resource content
+                import json
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps(result, indent=2)
+                )]
+    
+    raise ValueError(f"Unknown resource: {uri}")
 
 # Maintain a global StreamableHTTP transport instance
 streamable_http_transport: Optional[StreamableHTTPServerTransport] = None
