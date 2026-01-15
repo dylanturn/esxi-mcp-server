@@ -5,8 +5,9 @@
 ## 功能特性
 
 - 支持 ESXi 和 vCenter Server 连接
-- 现代 MCP 传输协议：
-  - **Streamable HTTP** - HTTP 传输协议，位于 `/message` 端点
+- 多种 MCP 传输协议：
+  - **Streamable HTTP** - HTTP 传输协议，位于 `/message` 端点（默认）
+  - **stdio** - 标准输入输出传输，用于子进程通信
 - RESTful API 接口，支持 JSON-RPC
 - 支持 API 密钥认证
 - 完整的虚拟机生命周期管理
@@ -62,15 +63,39 @@ log_level: "INFO"                    # 日志级别
 
 3. 运行服务器：
 
+**HTTP 传输（默认）**：
 ```bash
 python server.py -c config.yaml
+# 或者显式指定：
+python server.py -c config.yaml --transport http
+```
+
+**stdio 传输**（用于子进程/管道通信）：
+```bash
+python server.py -c config.yaml --transport stdio
 ```
 
 ## API 接口
 
 ### 传输协议
 
-服务器使用现代 **Streamable HTTP** MCP 传输协议：
+服务器支持两种 MCP 传输协议：
+
+1. **Streamable HTTP**（默认）- HTTP 传输
+   - 端点：`/message`
+   - 方法：`GET`（流式响应）、`POST`（请求）
+   - 需要 API 密钥认证
+   - 通过网络访问 `http://host:8080/message`
+
+2. **stdio** - 标准输入输出传输
+   - 通过 stdin/stdout 通信
+   - 作为子进程运行时使用
+   - 无需网络连接
+   - 由父进程处理认证
+
+### Streamable HTTP 传输
+
+使用 HTTP 传输时，服务器监听 8080 端口：
 
 - **端点**：`/message`
 - **方法**：`GET`（流式响应）、`POST`（请求）

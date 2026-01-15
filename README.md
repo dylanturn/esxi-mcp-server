@@ -5,8 +5,9 @@ A VMware ESXi/vCenter management server based on MCP (Model Control Protocol), p
 ## Features
 
 - Support for ESXi and vCenter Server connections
-- Modern MCP transport protocol:
-  - **Streamable HTTP** - HTTP-based transport at `/message` endpoint
+- Multiple MCP transport protocols:
+  - **Streamable HTTP** - HTTP-based transport at `/message` endpoint (default)
+  - **stdio** - Standard input/output transport for subprocess communication
 - RESTful API interface with JSON-RPC support
 - API key authentication
 - Complete virtual machine lifecycle management
@@ -62,15 +63,39 @@ log_level: "INFO"                    # Log level
 
 3. Run the server:
 
+**HTTP Transport (default)**:
 ```bash
 python server.py -c config.yaml
+# Or explicitly:
+python server.py -c config.yaml --transport http
+```
+
+**stdio Transport** (for subprocess/pipe communication):
+```bash
+python server.py -c config.yaml --transport stdio
 ```
 
 ## API Interface
 
-### Transport Protocol
+### Transport Protocols
 
-The server uses the modern **Streamable HTTP** MCP transport protocol:
+The server supports two MCP transport protocols:
+
+1. **Streamable HTTP** (default) - HTTP-based transport
+   - Endpoint: `/message`
+   - Methods: `GET` (streaming responses), `POST` (requests)
+   - Requires API key authentication
+   - Accessible over network at `http://host:8080/message`
+
+2. **stdio** - Standard input/output transport
+   - Communicates via stdin/stdout
+   - Used when running as a subprocess
+   - No network required
+   - Authentication handled by parent process
+
+### Streamable HTTP Transport
+
+When using HTTP transport, the server listens on port 8080:
 
 - **Endpoint**: `/message`
 - **Methods**: `GET` (for streaming responses), `POST` (for requests)
@@ -184,6 +209,11 @@ MIT License
 Issues and Pull Requests are welcome!
 
 ## Changelog
+
+### v0.0.3
+- Added stdio transport support for subprocess communication
+- Added `--transport` CLI flag to choose between HTTP and stdio modes
+- Enhanced flexibility for different deployment scenarios
 
 ### v0.0.2
 - **BREAKING CHANGE**: Replaced deprecated SSE transport with modern Streamable HTTP transport

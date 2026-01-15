@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any
 # MCP protocol related imports
 from mcp.server.lowlevel import Server  # MCP server base class
 from mcp.server.streamable_http import StreamableHTTPServerTransport  # Streamable HTTP transport support
+from mcp.server import stdio  # stdio transport support
 from mcp import types  # MCP type definitions
 
 # pyVmomi VMware API imports
@@ -637,6 +638,8 @@ async def app(scope, receive, send):
 # Parse command-line arguments and environment variables, and load configuration
 parser = argparse.ArgumentParser(description="MCP VMware ESXi Management Server")
 parser.add_argument("--config", "-c", help="Configuration file path (JSON or YAML)", default=None)
+parser.add_argument("--transport", "-t", choices=["stdio", "http"], default="http",
+                    help="Transport mode: 'stdio' for stdin/stdout communication (default: http)")
 args = parser.parse_args()
 
 # Attempt to load configuration from a file or environment variables
@@ -700,8 +703,21 @@ manager = VMwareManager(config)
 if config.api_key:
     logging.info("API key authentication is enabled. Clients must call the authenticate tool to verify the key before invoking sensitive operations")
 
-# Start ASGI server to listen for MCP SSE connections
+# Start MCP server with the selected transport
 if __name__ == "__main__":
-    # Start ASGI application using the built-in uvicorn server (listening on 0.0.0.0:8080)
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    if args.transport == "stdio":
+        # Run with stdio transport (stdin/stdout communication)
+        logging.info("Starting MCP server with stdio transport")
+        import anyio
+        
+        async def run_stdio():
+            async with stdio.stdio_server() as (read_stream, write_stream):
+                init_opts = mcp_server.create_initialization_options()
+                await mcp_server.run(read_stream, write_stream, init_opts)
+        
+        anyio.run(run_stdio)
+    else:
+        # Run with HTTP transport (default)
+        logging.info("Starting MCP server with HTTP transport on 0.0.0.0:8080")
+        import uvicorn
+        uvicorn.run(app, host="0.0.0.0", port=8080)
