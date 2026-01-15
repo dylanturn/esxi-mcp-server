@@ -549,15 +549,14 @@ async def sse_endpoint(scope, receive, send):
     headers = [(b"content-type", b"text/event-stream")]
     # Verify API key: Retrieve from request headers 'Authorization' or 'X-API-Key'
     headers_dict = {k.lower().decode(): v.decode() for (k, v) in scope.get("headers", [])}
-    header_keys = [h[0].lower() for h in scope.get("headers", [])]
     provided_key = None
-    if b"authorization" in header_keys:
+    # Check if authorization or x-api-key headers are present in the decoded headers_dict
+    if "authorization" in headers_dict:
         provided_key = headers_dict.get("authorization")
-    elif b"x-api-key" in header_keys:
+    elif "x-api-key" in headers_dict:
         provided_key = headers_dict.get("x-api-key")
     if config.api_key and provided_key != f"Bearer {config.api_key}" and provided_key != config.api_key:
         # If the correct API key is not provided, return 401
-        res_status = b"401 UNAUTHORIZED"
         await send({"type": "http.response.start", "status": 401, "headers": [(b"content-type", b"text/plain")]})
         await send({"type": "http.response.body", "body": b"Unauthorized"})
         logging.warning("No valid API key provided, rejecting SSE connection")
@@ -632,11 +631,11 @@ async def streamable_http_endpoint(scope, receive, send):
     
     # Verify API key if configured
     headers_dict = {k.lower().decode(): v.decode() for (k, v) in scope.get("headers", [])}
-    header_keys = [h[0].lower() for h in scope.get("headers", [])]
     provided_key = None
-    if b"authorization" in header_keys:
+    # Check if authorization or x-api-key headers are present in the decoded headers_dict
+    if "authorization" in headers_dict:
         provided_key = headers_dict.get("authorization")
-    elif b"x-api-key" in header_keys:
+    elif "x-api-key" in headers_dict:
         provided_key = headers_dict.get("x-api-key")
     
     if config.api_key and provided_key != f"Bearer {config.api_key}" and provided_key != config.api_key:
