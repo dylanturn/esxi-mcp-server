@@ -173,6 +173,22 @@ class VMwareManager:
         container.Destroy()
         return vm_list
 
+    def list_resource_pools(self) -> list:
+        """List all resource pools with their details."""
+        self._ensure_connected()
+        pools = []
+        container = self.content.viewManager.CreateContainerView(
+            self.datacenter_obj, [vim.ResourcePool], True)
+        for rp in container.view:
+            pool_info = {
+                "name": rp.name,
+                "cpu_limit": rp.config.cpuAllocation.limit,
+                "memory_limit": rp.config.memoryAllocation.limit,
+            }
+            pools.append(pool_info)
+        container.Destroy()
+        return pools
+
     def find_resource_pool(self, pool_name: str) -> Optional[vim.ResourcePool]:
         """Find a resource pool by name, searching the datacenter recursively."""
         container = self.content.viewManager.CreateContainerView(

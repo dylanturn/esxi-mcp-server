@@ -112,6 +112,11 @@ class ToolHandlers:
         """List all networks."""
         self._check_auth()
         return self.manager.list_networks()
+
+    def list_resource_pools(self) -> list:
+        """List all resource pools."""
+        self._check_auth()
+        return self.manager.list_resource_pools()
     
     def list_hosts(self) -> list:
         """List all ESXi hosts."""

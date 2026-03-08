@@ -552,7 +552,31 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers, config: C
             uri="vmstats://{vm_name}",
             description="Get CPU, memory, storage, network usage of a VM",
             mimeType="application/json"
-        )
+        ),
+        "networks": types.Resource(
+            name="networks",
+            uri="esxi://networks",
+            description="List all available networks (standard and distributed virtual portgroups)",
+            mimeType="application/json"
+        ),
+        "datastores": types.Resource(
+            name="datastores",
+            uri="esxi://datastores",
+            description="List all available datastores with capacity and free space",
+            mimeType="application/json"
+        ),
+        "datastoreClusters": types.Resource(
+            name="datastoreClusters",
+            uri="esxi://datastore-clusters",
+            description="List all datastore clusters (StoragePods) with capacity and member datastores",
+            mimeType="application/json"
+        ),
+        "resourcePools": types.Resource(
+            name="resourcePools",
+            uri="esxi://resource-pools",
+            description="List all resource pools with CPU and memory limits",
+            mimeType="application/json"
+        ),
     }
     
     # Register tool handlers using decorators
@@ -597,21 +621,34 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers, config: C
         """List all available resources."""
         return list(resources.values())
     
+    # Map static resource URIs to their handler functions
+    static_resource_handlers = {
+        "esxi://networks": lambda: tool_handlers.list_networks(),
+        "esxi://datastores": lambda: tool_handlers.list_datastores(),
+        "esxi://datastore-clusters": lambda: tool_handlers.list_datastore_clusters(),
+        "esxi://resource-pools": lambda: tool_handlers.list_resource_pools(),
+    }
+
     @mcp_server.read_resource()
     async def read_resource_handler(uri: str):
         """Handle resource reads."""
-        # Parse URI to extract resource name and parameters
-        for resource_name, resource in resources.items():
-            if uri.startswith(resource.uri.split("{")[0]):
-                # Extract parameters from URI
-                # For vmstats://{vm_name}, extract vm_name
-                if resource_name == "vmStats":
-                    vm_name = uri.replace("vmstats://", "")
-                    result = tool_handlers.vm_performance_resource(vm_name)
-                    # Return resource content
-                    return [types.TextContent(
-                        type="text",
-                        text=json.dumps(result, indent=2)
-                    )]
-        
+        uri_str = str(uri)
+
+        # Handle static resources
+        if uri_str in static_resource_handlers:
+            result = static_resource_handlers[uri_str]()
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(result, indent=2)
+            )]
+
+        # Handle parameterized resources
+        if uri_str.startswith("vmstats://"):
+            vm_name = uri_str.replace("vmstats://", "")
+            result = tool_handlers.vm_performance_resource(vm_name)
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(result, indent=2)
+            )]
+
         raise ValueError(f"Unknown resource: {uri}")
