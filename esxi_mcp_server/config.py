@@ -47,7 +47,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         if config_path.endswith((".yml", ".yaml")):
             import yaml
             with open(config_path, 'r') as f:
-                config_data = yaml.safe_load(f)
+                config_data = yaml.safe_load(f) or {}
         elif config_path.endswith(".json"):
             with open(config_path, 'r') as f:
                 config_data = json.load(f)
@@ -90,6 +90,11 @@ def load_config(config_path: Optional[str] = None) -> Config:
     required_keys = ["vcenter_host", "vcenter_user", "vcenter_password"]
     for k in required_keys:
         if k not in config_data or not config_data[k]:
-            raise Exception(f"Missing required configuration item: {k}")
+            loaded_keys = list(config_data.keys()) if config_data else []
+            raise Exception(
+                f"Missing required configuration item: {k}. "
+                f"Loaded keys: {loaded_keys}. "
+                f"Config source: {config_path or 'environment variables only'}"
+            )
     
     return Config(**config_data)
