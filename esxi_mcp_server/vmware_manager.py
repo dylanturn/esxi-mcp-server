@@ -379,7 +379,7 @@ class VMwareManager:
             "vendor": host.hardware.systemInfo.vendor if host.hardware else None,
             "model": host.hardware.systemInfo.model if host.hardware else None,
             "uuid": host.hardware.systemInfo.uuid if host.hardware else None,
-            "cpu_model": host.hardware.cpuInfo.model if host.hardware and host.hardware.cpuInfo else None,
+
             "cpu_cores": host.hardware.cpuInfo.numCpuCores if host.hardware and host.hardware.cpuInfo else 0,
             "cpu_threads": host.hardware.cpuInfo.numCpuThreads if host.hardware and host.hardware.cpuInfo else 0,
             "cpu_mhz": host.hardware.cpuInfo.hz // 1000000 if host.hardware and host.hardware.cpuInfo else 0,
@@ -522,6 +522,7 @@ class VMwareManager:
 
         # Build VM configuration specification
         vm_spec = vim.vm.ConfigSpec(name=name, memoryMB=memory_mb, numCPUs=cpus, guestId="otherGuest")  # guestId can be adjusted as needed
+        vm_spec.files = vim.vm.FileInfo(vmPathName=f"[{datastore_obj.name}]")
         device_specs = []
 
         # Add SCSI controller
@@ -657,9 +658,10 @@ class VMwareManager:
 
         # Build VM configuration specification
         vm_spec = vim.vm.ConfigSpec(name=name, memoryMB=memory_mb, numCPUs=cpus, guestId=guest_id)
+        vm_spec.files = vim.vm.FileInfo(vmPathName=f"[{datastore_obj.name}]")
         if annotation:
             vm_spec.annotation = annotation
-        
+
         device_specs = []
 
         # Add SCSI controller
