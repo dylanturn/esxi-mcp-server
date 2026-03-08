@@ -33,7 +33,8 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                     "memory": {"type": "integer", "description": "Memory in MB"},
                     "datastore": {"type": "string", "description": "Datastore name (optional)"},
                     "network": {"type": "string", "description": "Network name (optional)"},
-                    "folder": {"type": "string", "description": "Target VM folder name (optional)"}
+                    "folder": {"type": "string", "description": "Target VM folder name (optional)"},
+                    "resource_pool": {"type": "string", "description": "Target resource pool name (optional)"}
                 },
                 "required": ["name", "cpu", "memory"]
             }
@@ -46,7 +47,8 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                 "properties": {
                     "template_name": {"type": "string", "description": "Name of the template or VM to clone"},
                     "new_name": {"type": "string", "description": "Name for the new VM"},
-                    "folder": {"type": "string", "description": "Target VM folder name (optional)"}
+                    "folder": {"type": "string", "description": "Target VM folder name (optional)"},
+                    "resource_pool": {"type": "string", "description": "Target resource pool name (optional)"}
                 },
                 "required": ["template_name", "new_name"]
             }
@@ -131,7 +133,8 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                     "network": {"type": "string", "description": "Network name (optional)"},
                     "thin_provisioned": {"type": "boolean", "description": "Use thin provisioning", "default": True},
                     "annotation": {"type": "string", "description": "VM annotation/description"},
-                    "folder": {"type": "string", "description": "Target VM folder name (optional)"}
+                    "folder": {"type": "string", "description": "Target VM folder name (optional)"},
+                    "resource_pool": {"type": "string", "description": "Target resource pool name (optional)"}
                 },
                 "required": ["name", "cpu", "memory"]
             }

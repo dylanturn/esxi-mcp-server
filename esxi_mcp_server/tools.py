@@ -21,15 +21,15 @@ class ToolHandlers:
             if not self.manager.authenticated:
                 raise Exception("Unauthorized: API key required.")
     
-    def create_vm(self, name: str, cpu: int, memory: int, datastore: Optional[str] = None, network: Optional[str] = None, folder: Optional[str] = None) -> str:
+    def create_vm(self, name: str, cpu: int, memory: int, datastore: Optional[str] = None, network: Optional[str] = None, folder: Optional[str] = None, resource_pool: Optional[str] = None) -> str:
         """Create a new virtual machine."""
         self._check_auth()
-        return self.manager.create_vm(name, cpu, memory, datastore, network, folder)
-    
-    def clone_vm(self, template_name: str, new_name: str, folder: Optional[str] = None) -> str:
+        return self.manager.create_vm(name, cpu, memory, datastore, network, folder, resource_pool)
+
+    def clone_vm(self, template_name: str, new_name: str, folder: Optional[str] = None, resource_pool: Optional[str] = None) -> str:
         """Clone a virtual machine from a template."""
         self._check_auth()
-        return self.manager.clone_vm(template_name, new_name, folder)
+        return self.manager.clone_vm(template_name, new_name, folder, resource_pool)
     
     def delete_vm(self, name: str) -> str:
         """Delete the specified virtual machine."""
@@ -69,11 +69,12 @@ class ToolHandlers:
     def create_vm_custom(self, name: str, cpu: int, memory: int, disk_size_gb: int = 10,
                         guest_id: str = "otherGuest", datastore: Optional[str] = None,
                         network: Optional[str] = None, thin_provisioned: bool = True,
-                        annotation: Optional[str] = None, folder: Optional[str] = None) -> str:
+                        annotation: Optional[str] = None, folder: Optional[str] = None,
+                        resource_pool: Optional[str] = None) -> str:
         """Create a custom virtual machine with advanced options."""
         self._check_auth()
         return self.manager.create_vm_custom(name, cpu, memory, disk_size_gb, guest_id,
-                                            datastore, network, thin_provisioned, annotation, folder)
+                                            datastore, network, thin_provisioned, annotation, folder, resource_pool)
     
     def list_templates(self) -> list:
         """List all virtual machine templates."""
