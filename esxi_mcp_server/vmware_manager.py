@@ -169,6 +169,18 @@ class VMwareManager:
         container.Destroy()
         return result
 
+    def find_datastore(self, datastore_name: str) -> Optional[vim.Datastore]:
+        """Find a datastore by name, searching top-level and inside StoragePods."""
+        container = self.content.viewManager.CreateContainerView(
+            self.datacenter_obj, [vim.Datastore], True)
+        result = None
+        for ds in container.view:
+            if ds.name == datastore_name:
+                result = ds
+                break
+        container.Destroy()
+        return result
+
     def find_folder(self, folder_name: str) -> Optional[vim.Folder]:
         """Find a VM folder by name, searching the datacenter's vmFolder tree recursively."""
         def _search(folder):
@@ -510,8 +522,7 @@ class VMwareManager:
         datastore_obj = self.datastore_obj
         network_obj = self.network_obj
         if datastore:
-            datastore_obj = next((ds for ds in self.datacenter_obj.datastoreFolder.childEntity
-                                   if isinstance(ds, vim.Datastore) and ds.name == datastore), None)
+            datastore_obj = self.find_datastore(datastore)
             if not datastore_obj:
                 raise Exception(f"Specified datastore {datastore} not found")
         if network:
@@ -646,8 +657,7 @@ class VMwareManager:
         datastore_obj = self.datastore_obj
         network_obj = self.network_obj
         if datastore:
-            datastore_obj = next((ds for ds in self.datacenter_obj.datastoreFolder.childEntity
-                                   if isinstance(ds, vim.Datastore) and ds.name == datastore), None)
+            datastore_obj = self.find_datastore(datastore)
             if not datastore_obj:
                 raise Exception(f"Specified datastore {datastore} not found")
         if network:
