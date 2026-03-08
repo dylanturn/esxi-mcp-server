@@ -68,20 +68,46 @@ async def streamable_http_endpoint(scope, receive, send, mcp_server, config: Con
             
             # Start the MCP server task and keep a reference to prevent garbage collection
             streamable_http_task = asyncio.create_task(run_mcp_server())
+            # Log if the background task fails unexpectedly
+            def _on_task_done(task):
+                if task.cancelled():
+                    logging.info("MCP server background task was cancelled")
+                elif task.exception():
+                    logging.error("MCP server background task failed: %s",
+                                 task.exception(), exc_info=task.exception())
+            streamable_http_task.add_done_callback(_on_task_done)
     
     # Handle the request through the StreamableHTTPServerTransport
+    # Wrap send to capture the response status for logging
+    response_status = None
+    original_send = send
+    async def logging_send(message):
+        nonlocal response_status
+        if message.get("type") == "http.response.start":
+            response_status = message.get("status")
+        await original_send(message)
+
     try:
-        await streamable_http_transport.handle_request(scope, receive, send)
+        logging.debug("Handling streamable-http %s request to %s", scope.get("method"), scope.get("path"))
+        await streamable_http_transport.handle_request(scope, receive, logging_send)
+        if response_status and response_status >= 400:
+            # Read request body for context on errors
+            body_parts = []
+            async def capture_receive():
+                msg = await receive()
+                if msg.get("type") == "http.request":
+                    body_parts.append(msg.get("body", b""))
+                return msg
+            logging.error("StreamableHTTP transport returned %d for %s %s",
+                         response_status, scope.get("method"), scope.get("path"))
     except Exception as e:
-        logging.error(f"Error handling streamable-http request: {type(e).__name__}: {e}")
-        # Only attempt to send error response if we haven't started sending a response yet
-        # Note: ASGI spec requires checking state internally; we catch and log any errors
+        logging.error("Error handling streamable-http request: %s: %s",
+                     type(e).__name__, e, exc_info=True)
         try:
-            await send({"type": "http.response.start", "status": 500,
+            await original_send({"type": "http.response.start", "status": 500,
                         "headers": [(b"content-type", b"text/plain")]})
-            await send({"type": "http.response.body", "body": str(e).encode('utf-8')})
+            await original_send({"type": "http.response.body", "body": str(e).encode('utf-8')})
         except Exception:
-            # Response already started, can't send error response
             pass
 
 
