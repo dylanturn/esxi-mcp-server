@@ -32,7 +32,8 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                     "cpu": {"type": "integer", "description": "Number of CPUs"},
                     "memory": {"type": "integer", "description": "Memory in MB"},
                     "datastore": {"type": "string", "description": "Datastore name (optional)"},
-                    "network": {"type": "string", "description": "Network name (optional)"}
+                    "network": {"type": "string", "description": "Network name (optional)"},
+                    "folder": {"type": "string", "description": "Target VM folder name (optional)"}
                 },
                 "required": ["name", "cpu", "memory"]
             }
@@ -44,7 +45,8 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                 "type": "object",
                 "properties": {
                     "template_name": {"type": "string", "description": "Name of the template or VM to clone"},
-                    "new_name": {"type": "string", "description": "Name for the new VM"}
+                    "new_name": {"type": "string", "description": "Name for the new VM"},
+                    "folder": {"type": "string", "description": "Target VM folder name (optional)"}
                 },
                 "required": ["template_name", "new_name"]
             }
@@ -128,7 +130,8 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                     "datastore": {"type": "string", "description": "Datastore name (optional)"},
                     "network": {"type": "string", "description": "Network name (optional)"},
                     "thin_provisioned": {"type": "boolean", "description": "Use thin provisioning", "default": True},
-                    "annotation": {"type": "string", "description": "VM annotation/description"}
+                    "annotation": {"type": "string", "description": "VM annotation/description"},
+                    "folder": {"type": "string", "description": "Target VM folder name (optional)"}
                 },
                 "required": ["name", "cpu", "memory"]
             }

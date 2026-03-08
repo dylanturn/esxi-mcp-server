@@ -157,6 +157,20 @@ class VMwareManager:
         container.Destroy()
         return vm_list
 
+    def find_folder(self, folder_name: str) -> Optional[vim.Folder]:
+        """Find a VM folder by name, searching the datacenter's vmFolder tree recursively."""
+        def _search(folder):
+            if folder.name == folder_name:
+                return folder
+            for child in getattr(folder, 'childEntity', []):
+                if isinstance(child, vim.Folder):
+                    result = _search(child)
+                    if result is not None:
+                        return result
+            return None
+
+        return _search(self.datacenter_obj.vmFolder)
+
     def find_vm(self, name: str) -> Optional[vim.VirtualMachine]:
         """Find virtual machine object by name."""
         self._ensure_connected()
@@ -477,7 +491,7 @@ class VMwareManager:
         
         return stats
 
-    def create_vm(self, name: str, cpus: int, memory_mb: int, datastore: Optional[str] = None, network: Optional[str] = None) -> str:
+    def create_vm(self, name: str, cpus: int, memory_mb: int, datastore: Optional[str] = None, network: Optional[str] = None, folder: Optional[str] = None) -> str:
         """Create a new virtual machine (from scratch, with an empty disk and optional network)."""
         self._ensure_connected()
         # If a specific datastore or network is provided, update the corresponding object accordingly
@@ -546,7 +560,12 @@ class VMwareManager:
         vm_spec.deviceChange = device_specs
 
         # Get the folder in which to place the VM (default is the datacenter's vmFolder)
-        vm_folder = self.datacenter_obj.vmFolder
+        if folder:
+            vm_folder = self.find_folder(folder)
+            if not vm_folder:
+                raise Exception(f"VM folder '{folder}' not found")
+        else:
+            vm_folder = self.datacenter_obj.vmFolder
         # Create the VM in the specified resource pool
         try:
             task = vm_folder.CreateVM_Task(config=vm_spec, pool=self.resource_pool)
@@ -561,15 +580,20 @@ class VMwareManager:
         logging.info(f"Virtual machine created: {name}")
         return f"VM '{name}' created."
 
-    def clone_vm(self, template_name: str, new_name: str) -> str:
+    def clone_vm(self, template_name: str, new_name: str, folder: Optional[str] = None) -> str:
         """Clone a new virtual machine from an existing template or VM."""
         self._ensure_connected()
         template_vm = self.find_vm(template_name)
         if not template_vm:
             raise Exception(f"Template virtual machine {template_name} not found")
-        vm_folder = template_vm.parent  # Place the new VM in the same folder as the template
-        if not isinstance(vm_folder, vim.Folder):
-            vm_folder = self.datacenter_obj.vmFolder
+        if folder:
+            vm_folder = self.find_folder(folder)
+            if not vm_folder:
+                raise Exception(f"VM folder '{folder}' not found")
+        else:
+            vm_folder = template_vm.parent  # Place the new VM in the same folder as the template
+            if not isinstance(vm_folder, vim.Folder):
+                vm_folder = self.datacenter_obj.vmFolder
         # Use the resource pool of the host/cluster where the template is located
         resource_pool = template_vm.resourcePool or self.resource_pool
         relocate_spec = vim.vm.RelocateSpec(pool=resource_pool, datastore=self.datastore_obj)
@@ -589,7 +613,7 @@ class VMwareManager:
     def create_vm_custom(self, name: str, cpus: int, memory_mb: int, disk_size_gb: int = 10,
                         guest_id: str = "otherGuest", datastore: Optional[str] = None,
                         network: Optional[str] = None, thin_provisioned: bool = True,
-                        annotation: Optional[str] = None) -> str:
+                        annotation: Optional[str] = None, folder: Optional[str] = None) -> str:
         """Create a custom virtual machine with more configuration options."""
         self._ensure_connected()
         # If a specific datastore or network is provided, update the corresponding object accordingly
@@ -658,7 +682,12 @@ class VMwareManager:
         vm_spec.deviceChange = device_specs
 
         # Get the folder in which to place the VM
-        vm_folder = self.datacenter_obj.vmFolder
+        if folder:
+            vm_folder = self.find_folder(folder)
+            if not vm_folder:
+                raise Exception(f"VM folder '{folder}' not found")
+        else:
+            vm_folder = self.datacenter_obj.vmFolder
         try:
             task = vm_folder.CreateVM_Task(config=vm_spec, pool=self.resource_pool)
             while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
