@@ -1568,6 +1568,7 @@ class VMwareManager:
     def _download_datastore_file(self, datastore_path: str) -> bytes:
         """Download a file from a datastore path like '[dsName] path/to/file'."""
         import requests
+        from urllib.parse import quote
 
         match = re.match(r'\[(.+?)\]\s+(.+)', datastore_path)
         if not match:
@@ -1576,12 +1577,13 @@ class VMwareManager:
         ds_name = match.group(1)
         file_path = match.group(2)
 
-        url = (
-            f"https://{self.config.vcenter_host}/folder/{file_path}"
-            f"?dcPath={self.datacenter_obj.name}&dsName={ds_name}"
-        )
+        url = f"https://{self.config.vcenter_host}:443/folder/{quote(file_path, safe='/')}"
+        params = {
+            "dsName": ds_name,
+            "dcPath": self.datacenter_obj.name,
+        }
 
-        resp = requests.get(url, cookies=self._get_session_cookies(), verify=False)
+        resp = requests.get(url, params=params, cookies=self._get_session_cookies(), verify=False)
         if resp.status_code != 200:
             raise Exception(
                 f"Failed to download {datastore_path}: HTTP {resp.status_code}"
