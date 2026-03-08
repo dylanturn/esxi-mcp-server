@@ -20,7 +20,7 @@ COPY server.py .
 
 # Install Python dependencies and the package using uv
 RUN uv pip install --system --no-cache -r requirements.txt \
-    && uv pip install --system --no-cache -e .
+    && uv pip install --system --no-cache .
 
 # Production stage
 FROM python:3.11-slim
