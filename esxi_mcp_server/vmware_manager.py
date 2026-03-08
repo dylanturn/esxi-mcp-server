@@ -123,11 +123,13 @@ class VMwareManager:
             networks = self.datacenter_obj.networkFolder.childEntity
             self.network_obj = next((net for net in networks if net.name == self.config.network), None)
             if not self.network_obj:
-                logging.error(f"Network {self.config.network} not found")
-                raise Exception(f"Network {self.config.network} not found")
-            logging.info(f"Using network: {self.network_obj.name}")
+                available = [net.name for net in networks]
+                logging.warning(f"Network '{self.config.network}' not found. Available: {available}. "
+                                "Operations requiring a network must specify one explicitly.")
+            else:
+                logging.info(f"Using network: {self.network_obj.name}")
         else:
-            self.network_obj = None  # If no network is specified, VM creation can choose to not connect to a network
+            self.network_obj = None
 
     def _ensure_connected(self):
         """Verify the vCenter session is alive and reconnect if necessary.
