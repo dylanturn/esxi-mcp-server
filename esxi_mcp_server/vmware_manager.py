@@ -101,22 +101,21 @@ class VMwareManager:
         self.resource_pool = compute_resource.resourcePool
         logging.info(f"Using resource pool: {self.resource_pool.name}")
 
-        # Retrieve datastore object
+        # Retrieve datastore object (optional — resolved lazily if not configured)
         datastores = self._get_all_datastores(self.datacenter_obj.datastoreFolder)
         if self.config.datastore:
-            # Find specified datastore in the datacenter
             self.datastore_obj = next((ds for ds in datastores
                                        if ds.name == self.config.datastore), None)
             if not self.datastore_obj:
                 available = [ds.name for ds in datastores]
                 logging.error(f"Datastore named {self.config.datastore} not found. Available: {available}")
                 raise Exception(f"Datastore {self.config.datastore} not found. Available: {available}")
-        else:
-            if not datastores:
-                raise Exception("No available datastore found in the datacenter")
-            # Default to the datastore with the largest available capacity
+            logging.info(f"Using datastore: {self.datastore_obj.name}")
+        elif datastores:
             self.datastore_obj = max(datastores, key=lambda ds: ds.summary.freeSpace)
-        logging.info(f"Using datastore: {self.datastore_obj.name}")
+            logging.info(f"Using datastore: {self.datastore_obj.name}")
+        else:
+            logging.warning("No datastore found at startup; operations requiring a datastore must specify one explicitly")
 
         # Retrieve network object (network or distributed virtual portgroup)
         if self.config.network:
