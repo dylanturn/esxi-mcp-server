@@ -171,6 +171,25 @@ class VMwareManager:
         container.Destroy()
         return result
 
+    def find_datastore_cluster(self, cluster_name: str) -> Optional[vim.StoragePod]:
+        """Find a datastore cluster (StoragePod) by name."""
+        container = self.content.viewManager.CreateContainerView(
+            self.datacenter_obj, [vim.StoragePod], True)
+        result = None
+        for pod in container.view:
+            if pod.name == cluster_name:
+                result = pod
+                break
+        container.Destroy()
+        return result
+
+    def _pick_datastore_from_cluster(self, pod: vim.StoragePod) -> vim.Datastore:
+        """Return the datastore with the most free space from a StoragePod."""
+        datastores = [ds for ds in pod.childEntity if isinstance(ds, vim.Datastore)]
+        if not datastores:
+            raise Exception(f"Datastore cluster '{pod.name}' has no datastores")
+        return max(datastores, key=lambda ds: ds.summary.freeSpace)
+
     def find_datastore(self, datastore_name: str) -> Optional[vim.Datastore]:
         """Find a datastore by name, searching top-level and inside StoragePods."""
         container = self.content.viewManager.CreateContainerView(
@@ -517,7 +536,7 @@ class VMwareManager:
         
         return stats
 
-    def create_vm(self, name: str, cpus: int, memory_mb: int, datastore: Optional[str] = None, network: Optional[str] = None, folder: Optional[str] = None, resource_pool: Optional[str] = None, serial_console: bool = False) -> str:
+    def create_vm(self, name: str, cpus: int, memory_mb: int, datastore: Optional[str] = None, network: Optional[str] = None, folder: Optional[str] = None, resource_pool: Optional[str] = None, serial_console: bool = False, datastore_cluster: Optional[str] = None) -> str:
         """Create a new virtual machine (from scratch, with an empty disk and optional network)."""
         self._ensure_connected()
         # If a specific datastore or network is provided, update the corresponding object accordingly
@@ -527,6 +546,11 @@ class VMwareManager:
             datastore_obj = self.find_datastore(datastore)
             if not datastore_obj:
                 raise Exception(f"Specified datastore {datastore} not found")
+        elif datastore_cluster:
+            pod = self.find_datastore_cluster(datastore_cluster)
+            if not pod:
+                raise Exception(f"Datastore cluster '{datastore_cluster}' not found")
+            datastore_obj = self._pick_datastore_from_cluster(pod)
         if network:
             networks = self.datacenter_obj.networkFolder.childEntity
             network_obj = next((net for net in networks if net.name == network), None)
@@ -624,7 +648,7 @@ class VMwareManager:
         logging.info(f"Virtual machine created: {name}")
         return f"VM '{name}' created."
 
-    def clone_vm(self, template_name: str, new_name: str, folder: Optional[str] = None, resource_pool: Optional[str] = None, datastore: Optional[str] = None) -> str:
+    def clone_vm(self, template_name: str, new_name: str, folder: Optional[str] = None, resource_pool: Optional[str] = None, datastore: Optional[str] = None, datastore_cluster: Optional[str] = None) -> str:
         """Clone a new virtual machine from an existing template or VM."""
         self._ensure_connected()
         template_vm = self.find_vm(template_name)
@@ -650,6 +674,11 @@ class VMwareManager:
             datastore_obj = self.find_datastore(datastore)
             if not datastore_obj:
                 raise Exception(f"Specified datastore {datastore} not found")
+        elif datastore_cluster:
+            pod = self.find_datastore_cluster(datastore_cluster)
+            if not pod:
+                raise Exception(f"Datastore cluster '{datastore_cluster}' not found")
+            datastore_obj = self._pick_datastore_from_cluster(pod)
         else:
             datastore_obj = self.datastore_obj
         relocate_spec = vim.vm.RelocateSpec(pool=pool_obj, datastore=datastore_obj)
@@ -670,7 +699,8 @@ class VMwareManager:
                         guest_id: str = "otherGuest", datastore: Optional[str] = None,
                         network: Optional[str] = None, thin_provisioned: bool = True,
                         annotation: Optional[str] = None, folder: Optional[str] = None,
-                        resource_pool: Optional[str] = None, serial_console: bool = False) -> str:
+                        resource_pool: Optional[str] = None, serial_console: bool = False,
+                        datastore_cluster: Optional[str] = None) -> str:
         """Create a custom virtual machine with more configuration options."""
         self._ensure_connected()
         # If a specific datastore or network is provided, update the corresponding object accordingly
@@ -680,6 +710,11 @@ class VMwareManager:
             datastore_obj = self.find_datastore(datastore)
             if not datastore_obj:
                 raise Exception(f"Specified datastore {datastore} not found")
+        elif datastore_cluster:
+            pod = self.find_datastore_cluster(datastore_cluster)
+            if not pod:
+                raise Exception(f"Datastore cluster '{datastore_cluster}' not found")
+            datastore_obj = self._pick_datastore_from_cluster(pod)
         if network:
             networks = self.datacenter_obj.networkFolder.childEntity
             network_obj = next((net for net in networks if net.name == network), None)

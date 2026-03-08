@@ -31,7 +31,8 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                     "name": {"type": "string", "description": "VM name"},
                     "cpu": {"type": "integer", "description": "Number of CPUs"},
                     "memory": {"type": "integer", "description": "Memory in MB"},
-                    "datastore": {"type": "string", "description": "Datastore name (optional)"},
+                    "datastore": {"type": "string", "description": "Datastore name (optional, takes precedence over datastore_cluster)"},
+                    "datastore_cluster": {"type": "string", "description": "Datastore cluster (StoragePod) name — picks the datastore with most free space (optional)"},
                     "network": {"type": "string", "description": "Network name (optional)"},
                     "folder": {"type": "string", "description": "Target VM folder name (optional)"},
                     "resource_pool": {"type": "string", "description": "Target resource pool name (optional)"},
@@ -50,7 +51,8 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                     "new_name": {"type": "string", "description": "Name for the new VM"},
                     "folder": {"type": "string", "description": "Target VM folder name (optional)"},
                     "resource_pool": {"type": "string", "description": "Target resource pool name (optional)"},
-                    "datastore": {"type": "string", "description": "Target datastore name (optional)"}
+                    "datastore": {"type": "string", "description": "Target datastore name (optional, takes precedence over datastore_cluster)"},
+                    "datastore_cluster": {"type": "string", "description": "Datastore cluster (StoragePod) name — picks the datastore with most free space (optional)"}
                 },
                 "required": ["template_name", "new_name"]
             }
@@ -131,7 +133,8 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                     "memory": {"type": "integer", "description": "Memory in MB"},
                     "disk_size_gb": {"type": "integer", "description": "Disk size in GB", "default": 10},
                     "guest_id": {"type": "string", "description": "Guest OS identifier", "default": "otherGuest"},
-                    "datastore": {"type": "string", "description": "Datastore name (optional)"},
+                    "datastore": {"type": "string", "description": "Datastore name (optional, takes precedence over datastore_cluster)"},
+                    "datastore_cluster": {"type": "string", "description": "Datastore cluster (StoragePod) name — picks the datastore with most free space (optional)"},
                     "network": {"type": "string", "description": "Network name (optional)"},
                     "thin_provisioned": {"type": "boolean", "description": "Use thin provisioning", "default": True},
                     "annotation": {"type": "string", "description": "VM annotation/description"},
