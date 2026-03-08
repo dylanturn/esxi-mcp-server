@@ -1564,7 +1564,7 @@ class VMwareManager:
         sts_url = f"https://{self.config.vcenter_host}/sts/STSService/vsphere.local"
 
         soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
-<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
             xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
             xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
             xmlns:wst="http://docs.oasis-open.org/ws-sx/ws-trust/200512">
@@ -1595,7 +1595,7 @@ class VMwareManager:
 </s:Envelope>"""
 
         headers = {
-            "Content-Type": "application/soap+xml; charset=utf-8",
+            "Content-Type": "text/xml; charset=utf-8",
             "SOAPAction": "http://docs.oasis-open.org/ws-sx/ws-trust/200512/RST/Issue",
         }
 
