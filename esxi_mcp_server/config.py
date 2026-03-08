@@ -89,7 +89,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
     # Validate required keys
     required_keys = ["vcenter_host", "vcenter_user", "vcenter_password"]
     for k in required_keys:
-        if k not in config_data or not config_data[k]:
+        if k not in config_data or config_data[k] is None:
             loaded_keys = list(config_data.keys()) if config_data else []
             raise Exception(
                 f"Missing required configuration item: {k}. "
