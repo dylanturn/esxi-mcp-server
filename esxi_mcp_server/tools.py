@@ -169,19 +169,23 @@ class ToolHandlers:
         self._check_auth()
         return self.manager.remove_all_snapshots(vm_name)
     
-    def execute_program_in_vm(self, vm_name: str, username: str, password: str,
-                             program_path: str, program_arguments: str = "") -> dict:
+    def execute_program_in_vm(self, vm_name: str, program_path: str,
+                             program_arguments: str = "",
+                             username: str = None,
+                             password: str = None) -> dict:
         """Execute a program inside a VM."""
         self._check_auth()
-        return self.manager.execute_program_in_vm(vm_name, username, password,
-                                                 program_path, program_arguments)
-    
-    def upload_file_to_vm(self, vm_name: str, username: str, password: str,
-                         local_file_path: str, remote_file_path: str) -> str:
+        return self.manager.execute_program_in_vm(
+            vm_name, program_path, program_arguments, username, password)
+
+    def upload_file_to_vm(self, vm_name: str, local_file_path: str,
+                         remote_file_path: str,
+                         username: str = None,
+                         password: str = None) -> str:
         """Upload a file to a VM."""
         self._check_auth()
-        return self.manager.upload_file_to_vm(vm_name, username, password,
-                                             local_file_path, remote_file_path)
+        return self.manager.upload_file_to_vm(
+            vm_name, local_file_path, remote_file_path, username, password)
     
     def upload_file_to_datastore(self, datastore_name: str, local_file_path: str,
                                  remote_file_path: str) -> str:

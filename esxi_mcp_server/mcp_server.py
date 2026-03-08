@@ -283,32 +283,40 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
         ),
         "execute_program_in_vm": types.Tool(
             name="execute_program_in_vm",
-            description="Execute a program inside a VM using VMware Tools",
+            description=(
+                "Execute a program inside a VM using VMware Tools. "
+                "If username/password are omitted, authenticates via SAML "
+                "token (requires VMWARE_SAML_ENABLED=true and a guest alias "
+                "configured in the VM)."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "vm_name": {"type": "string", "description": "Name of the VM"},
-                    "username": {"type": "string", "description": "Guest OS username"},
-                    "password": {"type": "string", "description": "Guest OS password"},
                     "program_path": {"type": "string", "description": "Full path to the program in guest OS"},
-                    "program_arguments": {"type": "string", "description": "Program arguments (optional)", "default": ""}
+                    "program_arguments": {"type": "string", "description": "Program arguments (optional)", "default": ""},
+                    "username": {"type": "string", "description": "Guest OS username (optional with SAML)"},
+                    "password": {"type": "string", "description": "Guest OS password (optional with SAML)"}
                 },
-                "required": ["vm_name", "username", "password", "program_path"]
+                "required": ["vm_name", "program_path"]
             }
         ),
         "upload_file_to_vm": types.Tool(
             name="upload_file_to_vm",
-            description="Upload a file to a VM using VMware Tools",
+            description=(
+                "Upload a file to a VM using VMware Tools. "
+                "If username/password are omitted, authenticates via SAML."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "vm_name": {"type": "string", "description": "Name of the VM"},
-                    "username": {"type": "string", "description": "Guest OS username"},
-                    "password": {"type": "string", "description": "Guest OS password"},
                     "local_file_path": {"type": "string", "description": "Local file path to upload"},
-                    "remote_file_path": {"type": "string", "description": "Destination path in guest OS"}
+                    "remote_file_path": {"type": "string", "description": "Destination path in guest OS"},
+                    "username": {"type": "string", "description": "Guest OS username (optional with SAML)"},
+                    "password": {"type": "string", "description": "Guest OS password (optional with SAML)"}
                 },
-                "required": ["vm_name", "username", "password", "local_file_path", "remote_file_path"]
+                "required": ["vm_name", "local_file_path", "remote_file_path"]
             }
         ),
         "upload_file_to_datastore": types.Tool(

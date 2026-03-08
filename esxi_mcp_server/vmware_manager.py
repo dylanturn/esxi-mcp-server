@@ -1023,26 +1023,25 @@ class VMwareManager:
             if snapshot.childSnapshotList:
                 self._collect_snapshots(snapshot.childSnapshotList, result, level + 1)
 
-    def execute_program_in_vm(self, vm_name: str, username: str, password: str,
-                             program_path: str, program_arguments: str = "") -> Dict[str, Any]:
+    def execute_program_in_vm(self, vm_name: str, program_path: str,
+                             program_arguments: str = "",
+                             username: str = None,
+                             password: str = None) -> Dict[str, Any]:
         """Execute a program inside a VM using VMware Tools."""
         self._ensure_connected()
-        import re
 
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
-        
+
         # Check VMware Tools status
         tools_status = vm.guest.toolsStatus
         if tools_status in ('toolsNotInstalled', 'toolsNotRunning'):
             raise Exception(
                 "VMware Tools is either not running or not installed. "
                 "Ensure VMware Tools is running before executing programs.")
-        
-        # Create credentials
-        creds = vim.vm.guest.NamePasswordAuthentication(
-            username=username, password=password)
+
+        creds = self._get_guest_credentials(username, password)
         
         # Get process manager
         process_manager = self.content.guestOperationsManager.processManager
@@ -1088,26 +1087,25 @@ class VMwareManager:
         else:
             raise Exception("Failed to start program in VM")
 
-    def upload_file_to_vm(self, vm_name: str, username: str, password: str,
-                         local_file_path: str, remote_file_path: str) -> str:
+    def upload_file_to_vm(self, vm_name: str, local_file_path: str,
+                         remote_file_path: str,
+                         username: str = None,
+                         password: str = None) -> str:
         """Upload a file to a VM using VMware Tools."""
         self._ensure_connected()
-        import re
         import requests
 
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
-        
+
         # Check VMware Tools status
         tools_status = vm.guest.toolsStatus
         if tools_status in ('toolsNotInstalled', 'toolsNotRunning'):
             raise Exception(
                 "VMware Tools is either not running or not installed.")
-        
-        # Create credentials
-        creds = vim.vm.guest.NamePasswordAuthentication(
-            username=username, password=password)
+
+        creds = self._get_guest_credentials(username, password)
         
         # Read the local file
         with open(local_file_path, 'rb') as f:
@@ -1552,6 +1550,93 @@ class VMwareManager:
         ]
 
         return [folder_to_child, dc_to_vmfolder, dc_to_hostfolder]
+
+    def _acquire_saml_token(self) -> str:
+        """Acquire a SAML bearer token from the vCenter STS."""
+        import requests
+        import xml.etree.ElementTree as ET
+        from datetime import datetime, timezone, timedelta
+
+        now = datetime.now(timezone.utc)
+        created = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        expires = (now + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+        sts_url = f"https://{self.config.vcenter_host}/sts/STSService/vsphere.local"
+
+        soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+            xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+            xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
+            xmlns:wst="http://docs.oasis-open.org/ws-sx/ws-trust/200512">
+  <s:Header>
+    <wsse:Security>
+      <wsu:Timestamp>
+        <wsu:Created>{created}</wsu:Created>
+        <wsu:Expires>{expires}</wsu:Expires>
+      </wsu:Timestamp>
+      <wsse:UsernameToken>
+        <wsse:Username>{self.config.vcenter_user}</wsse:Username>
+        <wsse:Password>{self.config.vcenter_password}</wsse:Password>
+      </wsse:UsernameToken>
+    </wsse:Security>
+  </s:Header>
+  <s:Body>
+    <wst:RequestSecurityToken>
+      <wst:RequestType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue</wst:RequestType>
+      <wst:TokenType>urn:oasis:names:tc:SAML:2.0:assertion</wst:TokenType>
+      <wst:KeyType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Bearer</wst:KeyType>
+      <wst:Lifetime>
+        <wsu:Created>{created}</wsu:Created>
+        <wsu:Expires>{expires}</wsu:Expires>
+      </wst:Lifetime>
+      <wst:Renewing Allow="true" OK="true"/>
+    </wst:RequestSecurityToken>
+  </s:Body>
+</s:Envelope>"""
+
+        headers = {
+            "Content-Type": "application/soap+xml; charset=utf-8",
+            "SOAPAction": "http://docs.oasis-open.org/ws-sx/ws-trust/200512/RST/Issue",
+        }
+
+        resp = requests.post(
+            sts_url, data=soap_body, headers=headers,
+            verify=not self.config.insecure
+        )
+        if resp.status_code != 200:
+            raise Exception(f"STS token request failed: HTTP {resp.status_code}")
+
+        root = ET.fromstring(resp.text)
+        ns = {"saml2": "urn:oasis:names:tc:SAML:2.0:assertion"}
+        assertion = root.find(".//saml2:Assertion", ns)
+        if assertion is None:
+            raise Exception("No SAML assertion found in STS response")
+
+        return ET.tostring(assertion, encoding="unicode")
+
+    def _get_guest_credentials(self, username: str = None, password: str = None):
+        """Return NamePasswordAuthentication or SAMLTokenAuthentication.
+
+        Password auth is used when both username and password are provided.
+        SAML auth is used when credentials are omitted and saml_enabled is True.
+        Otherwise raises an exception.
+        """
+        if username and password:
+            return vim.vm.guest.NamePasswordAuthentication(
+                username=username, password=password
+            )
+
+        if self.config.saml_enabled:
+            saml_token = self._acquire_saml_token()
+            return vim.vm.guest.SAMLTokenAuthentication(
+                token=saml_token,
+                username=""
+            )
+
+        raise Exception(
+            "Guest credentials required. Provide username/password "
+            "or enable SAML auth (VMWARE_SAML_ENABLED=true)."
+        )
 
     def _get_session_cookies(self) -> dict:
         """Return the vSphere session cookie as a dict suitable for requests."""
