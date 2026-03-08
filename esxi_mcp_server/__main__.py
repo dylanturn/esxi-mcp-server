@@ -53,7 +53,7 @@ def main():
     # Create tool handlers and MCP server
     tool_handlers = ToolHandlers(manager, config)
     mcp_server = create_mcp_server()
-    register_handlers(mcp_server, tool_handlers)
+    register_handlers(mcp_server, tool_handlers, config)
     
     # Start MCP server with the selected transport
     if args.transport == "stdio":

@@ -178,14 +178,72 @@ class ToolHandlers:
         return self.manager.execute_program_in_vm(
             vm_name, program_path, program_arguments, username, password)
 
-    def upload_file_to_vm(self, vm_name: str, local_file_path: str,
-                         remote_file_path: str,
+    def upload_file_to_vm(self, vm_name: str, remote_file_path: str,
+                         local_file_path: str = None,
+                         file_content_base64: str = None,
                          username: str = None,
                          password: str = None) -> str:
         """Upload a file to a VM."""
         self._check_auth()
         return self.manager.upload_file_to_vm(
-            vm_name, local_file_path, remote_file_path, username, password)
+            vm_name, remote_file_path, local_file_path, file_content_base64, username, password)
+
+    def download_file_from_vm(self, vm_name: str, remote_file_path: str,
+                              username: str = None,
+                              password: str = None) -> dict:
+        """Download a file from a VM."""
+        self._check_auth()
+        return self.manager.download_file_from_vm(
+            vm_name, remote_file_path, username, password)
+
+    def edit_file_on_vm(self, vm_name: str, file_path: str, sha: str,
+                        edits: list, username: str = None,
+                        password: str = None) -> dict:
+        """Edit a file on a VM using targeted string replacements.
+
+        Downloads the file, validates the sha256 matches, applies edits
+        sequentially, then uploads the result.
+        """
+        import hashlib
+        import base64
+        self._check_auth()
+
+        # Download current file
+        result = self.manager.download_file_from_vm(
+            vm_name, file_path, username, password)
+        current_sha = result["sha256"]
+        if current_sha != sha:
+            raise Exception(
+                f"SHA mismatch: expected {sha}, got {current_sha}. "
+                "Re-download the file to get the current content and SHA.")
+
+        content = base64.b64decode(result["file_content_base64"]).decode("utf-8")
+
+        # Apply edits sequentially
+        for i, edit in enumerate(edits):
+            old_string = edit.get("old_string", "")
+            new_string = edit.get("new_string", "")
+            if not old_string:
+                raise Exception(f"Edit {i}: old_string must not be empty.")
+            if old_string not in content:
+                raise Exception(
+                    f"Edit {i}: old_string not found in file content.")
+            content = content.replace(old_string, new_string, 1)
+
+        # Upload the edited file
+        edited_data = content.encode("utf-8")
+        edited_b64 = base64.b64encode(edited_data).decode("ascii")
+        new_sha = hashlib.sha256(edited_data).hexdigest()
+
+        self.manager.upload_file_to_vm(
+            vm_name, file_path, file_content_base64=edited_b64,
+            username=username, password=password)
+
+        return {
+            "message": f"Successfully applied {len(edits)} edit(s) to {file_path}",
+            "new_sha256": new_sha,
+            "new_size_bytes": len(edited_data),
+        }
     
     def upload_file_to_datastore(self, datastore_name: str, local_file_path: str,
                                  remote_file_path: str) -> str:

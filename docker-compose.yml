@@ -26,6 +26,7 @@ services:
       - VCENTER_INSECURE=${VCENTER_INSECURE:-true}
       - MCP_API_KEY=${MCP_API_KEY:-}
       - MCP_LOG_LEVEL=${MCP_LOG_LEVEL:-INFO}
+      - MCP_EXPERIMENTAL_TOOLS=${MCP_EXPERIMENTAL_TOOLS:-false}
     networks:
       - mcp-network
     healthcheck:

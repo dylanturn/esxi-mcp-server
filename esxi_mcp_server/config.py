@@ -23,6 +23,7 @@ class Config:
     log_level: str = "INFO"            # Log level
     max_retries: int = 3               # Maximum reconnection attempts on session failure
     retry_delay_seconds: float = 5.0   # Delay between reconnection attempts (seconds)
+    experimental_tools: bool = False   # Enable experimental tools (download_file_from_vm, edit_file_on_vm)
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
@@ -68,14 +69,15 @@ def load_config(config_path: Optional[str] = None) -> Config:
         "MCP_LOG_FILE": "log_file",
         "MCP_LOG_LEVEL": "log_level",
         "MCP_MAX_RETRIES": "max_retries",
-        "MCP_RETRY_DELAY_SECONDS": "retry_delay_seconds"
+        "MCP_RETRY_DELAY_SECONDS": "retry_delay_seconds",
+        "MCP_EXPERIMENTAL_TOOLS": "experimental_tools"
     }
 
     for env_key, cfg_key in env_map.items():
         if env_key in os.environ:
             val = os.environ[env_key]
             # Boolean type conversion
-            if cfg_key in ("insecure", "saml_enabled"):
+            if cfg_key in ("insecure", "saml_enabled", "experimental_tools"):
                 config_data[cfg_key] = val.lower() in ("1", "true", "yes")
             elif cfg_key == "max_retries":
                 config_data[cfg_key] = int(val)

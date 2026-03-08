@@ -10,11 +10,16 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements file
-COPY requirements.txt .
+# Copy requirements and setup files
+COPY requirements.txt setup.py ./
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Copy application package (needed for pip install -e .)
+COPY esxi_mcp_server/ ./esxi_mcp_server/
+COPY server.py .
+
+# Install Python dependencies and the package itself
+RUN pip install --no-cache-dir --user -r requirements.txt \
+    && pip install --no-cache-dir --user -e .
 
 # Production stage
 FROM python:3.11-slim
@@ -37,6 +42,8 @@ COPY --from=builder /root/.local /home/mcpuser/.local
 
 # Copy application code
 COPY server.py .
+COPY esxi_mcp_server/ ./esxi_mcp_server/
+COPY setup.py .
 COPY config.yaml.sample .
 COPY docker-entrypoint.sh .
 
@@ -64,4 +71,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Set entrypoint and default command
 ENTRYPOINT ["./docker-entrypoint.sh"]
-CMD ["python", "server.py", "--config", "/app/config/config.yaml"] 
+CMD ["python", "-m", "esxi_mcp_server", "--config", "/app/config/config.yaml"]

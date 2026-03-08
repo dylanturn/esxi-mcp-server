@@ -9,3 +9,4 @@ insecure: true                  # Skip SSL certificate verification
 api_key: "s3cr3t-api-key"        # API key for authentication
 log_file: "./logs/vmware_mcp.log"  # Log file path
 log_level: "DEBUG"                # Log level: DEBUG/INFO/WARNING/ERROR
+experimental_tools: false         # Enable experimental tools (download_file_from_vm, edit_file_on_vm)

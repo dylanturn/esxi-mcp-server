@@ -1087,13 +1087,23 @@ class VMwareManager:
         else:
             raise Exception("Failed to start program in VM")
 
-    def upload_file_to_vm(self, vm_name: str, local_file_path: str,
-                         remote_file_path: str,
+    def upload_file_to_vm(self, vm_name: str, remote_file_path: str,
+                         local_file_path: str = None,
+                         file_content_base64: str = None,
                          username: str = None,
                          password: str = None) -> str:
-        """Upload a file to a VM using VMware Tools."""
+        """Upload a file to a VM using VMware Tools.
+
+        Provide either local_file_path (path on the MCP server) or
+        file_content_base64 (base64-encoded file content, max ~1 MB).
+        """
         self._ensure_connected()
         import requests
+
+        if not local_file_path and not file_content_base64:
+            raise Exception("Either local_file_path or file_content_base64 must be provided.")
+        if local_file_path and file_content_base64:
+            raise Exception("Provide only one of local_file_path or file_content_base64, not both.")
 
         vm = self.find_vm(vm_name)
         if not vm:
@@ -1106,32 +1116,82 @@ class VMwareManager:
                 "VMware Tools is either not running or not installed.")
 
         creds = self._get_guest_credentials(username, password)
-        
-        # Read the local file
-        with open(local_file_path, 'rb') as f:
-            file_data = f.read()
-        
+
+        # Get file data from either source
+        if file_content_base64:
+            file_data = base64.b64decode(file_content_base64)
+            if len(file_data) > 1_048_576:
+                raise Exception("Base64 file content exceeds 1 MB limit. Use local_file_path for larger files.")
+        else:
+            with open(local_file_path, 'rb') as f:
+                file_data = f.read()
+
         # Get file manager
         file_manager = self.content.guestOperationsManager.fileManager
-        
+
         # Create file attributes
         file_attribute = vim.vm.guest.FileManager.FileAttributes()
-        
+
         # Initiate file transfer
         url = file_manager.InitiateFileTransferToGuest(
             vm, creds, remote_file_path, file_attribute, len(file_data), True)
-        
+
         # Fix the URL (replace wildcard with actual host)
         url = re.sub(r"^https://\*:", f"https://{self.config.vcenter_host}:", url)
-        
+
         # Upload the file
         resp = requests.put(url, data=file_data, verify=False)
-        
+
         if resp.status_code == 200:
             logging.info(f"File uploaded to VM '{vm_name}': {remote_file_path}")
             return f"Successfully uploaded file to {remote_file_path} in VM '{vm_name}'"
         else:
             raise Exception(f"Failed to upload file. HTTP status: {resp.status_code}")
+
+    def download_file_from_vm(self, vm_name: str, remote_file_path: str,
+                              username: str = None,
+                              password: str = None) -> dict:
+        """Download a file from a VM using VMware Tools.
+
+        Returns a dict with file_content_base64 (base64-encoded), size_bytes,
+        and a sha256 hex digest of the content.
+        """
+        self._ensure_connected()
+        import hashlib
+        import requests
+
+        vm = self.find_vm(vm_name)
+        if not vm:
+            raise Exception(f"VM {vm_name} not found")
+
+        tools_status = vm.guest.toolsStatus
+        if tools_status in ('toolsNotInstalled', 'toolsNotRunning'):
+            raise Exception(
+                "VMware Tools is either not running or not installed.")
+
+        creds = self._get_guest_credentials(username, password)
+
+        file_manager = self.content.guestOperationsManager.fileManager
+
+        file_transfer_info = file_manager.InitiateFileTransferFromGuest(
+            vm, creds, remote_file_path)
+
+        url = file_transfer_info.url
+        url = re.sub(r"^https://\*:", f"https://{self.config.vcenter_host}:", url)
+
+        resp = requests.get(url, verify=False)
+        if resp.status_code != 200:
+            raise Exception(f"Failed to download file. HTTP status: {resp.status_code}")
+
+        file_data = resp.content
+        sha256 = hashlib.sha256(file_data).hexdigest()
+
+        logging.info(f"File downloaded from VM '{vm_name}': {remote_file_path} ({len(file_data)} bytes)")
+        return {
+            "file_content_base64": base64.b64encode(file_data).decode("ascii"),
+            "size_bytes": len(file_data),
+            "sha256": sha256,
+        }
 
     def upload_file_to_datastore(self, datastore_name: str, local_file_path: str,
                                  remote_file_path: str) -> str:

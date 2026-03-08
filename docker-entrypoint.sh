@@ -63,6 +63,7 @@ EOF
     [ -n "$VCENTER_INSECURE" ] && echo "insecure: ${VCENTER_INSECURE}" >> "$config_file"
     [ -n "$MCP_API_KEY" ] && echo "api_key: \"${MCP_API_KEY}\"" >> "$config_file"
     [ -n "$MCP_LOG_LEVEL" ] && echo "log_level: \"${MCP_LOG_LEVEL}\"" >> "$config_file"
+    [ -n "$MCP_EXPERIMENTAL_TOOLS" ] && echo "experimental_tools: ${MCP_EXPERIMENTAL_TOOLS}" >> "$config_file"
     
     # Always set log file path
     echo "log_file: \"/app/logs/vmware_mcp.log\"" >> "$config_file"
