@@ -20,6 +20,8 @@ class Config:
     api_key: Optional[str] = None      # API access key for authentication
     log_file: Optional[str] = None     # Log file path (if not specified, output to console)
     log_level: str = "INFO"            # Log level
+    max_retries: int = 3               # Maximum reconnection attempts on session failure
+    retry_delay_seconds: float = 5.0   # Delay between reconnection attempts (seconds)
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
@@ -62,15 +64,21 @@ def load_config(config_path: Optional[str] = None) -> Config:
         "VCENTER_INSECURE": "insecure",
         "MCP_API_KEY": "api_key",
         "MCP_LOG_FILE": "log_file",
-        "MCP_LOG_LEVEL": "log_level"
+        "MCP_LOG_LEVEL": "log_level",
+        "MCP_MAX_RETRIES": "max_retries",
+        "MCP_RETRY_DELAY_SECONDS": "retry_delay_seconds"
     }
-    
+
     for env_key, cfg_key in env_map.items():
         if env_key in os.environ:
             val = os.environ[env_key]
             # Boolean type conversion
             if cfg_key == "insecure":
                 config_data[cfg_key] = val.lower() in ("1", "true", "yes")
+            elif cfg_key == "max_retries":
+                config_data[cfg_key] = int(val)
+            elif cfg_key == "retry_delay_seconds":
+                config_data[cfg_key] = float(val)
             else:
                 config_data[cfg_key] = val
     

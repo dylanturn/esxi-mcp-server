@@ -1,6 +1,7 @@
 """VMware vSphere management using pyVmomi."""
 
 import ssl
+import time
 import logging
 from typing import Optional, Dict, Any
 
@@ -114,8 +115,40 @@ class VMwareManager:
         else:
             self.network_obj = None  # If no network is specified, VM creation can choose to not connect to a network
 
+    def _ensure_connected(self):
+        """Verify the vCenter session is alive and reconnect if necessary.
+
+        Checks liveness by calling self.si.CurrentTime(). If the session has
+        expired (NotAuthenticated) or any connection error occurs, attempts to
+        re-establish the connection using _connect_vcenter() with up to
+        config.max_retries attempts and config.retry_delay_seconds backoff.
+        """
+        try:
+            self.si.CurrentTime()
+            return
+        except vim.fault.NotAuthenticated:
+            logging.warning("vCenter session expired (NotAuthenticated); attempting reconnection.")
+        except Exception as e:
+            logging.warning(f"vCenter connection check failed ({type(e).__name__}: {e}); attempting reconnection.")
+
+        for attempt in range(1, self.config.max_retries + 1):
+            try:
+                logging.warning(f"Reconnecting to vCenter (attempt {attempt}/{self.config.max_retries})...")
+                self._connect_vcenter()
+                logging.warning("Successfully reconnected to vCenter.")
+                return
+            except Exception as e:
+                logging.warning(f"Reconnection attempt {attempt} failed: {e}")
+                if attempt < self.config.max_retries:
+                    time.sleep(self.config.retry_delay_seconds)
+
+        raise Exception(
+            f"Failed to reconnect to vCenter after {self.config.max_retries} attempt(s)."
+        )
+
     def list_vms(self) -> list:
         """List all virtual machine names."""
+        self._ensure_connected()
         vm_list = []
         # Create a view to iterate over all virtual machines
         container = self.content.viewManager.CreateContainerView(self.content.rootFolder, [vim.VirtualMachine], True)
@@ -126,6 +159,7 @@ class VMwareManager:
 
     def find_vm(self, name: str) -> Optional[vim.VirtualMachine]:
         """Find virtual machine object by name."""
+        self._ensure_connected()
         container = self.content.viewManager.CreateContainerView(self.content.rootFolder, [vim.VirtualMachine], True)
         vm_obj = None
         for vm in container.view:
@@ -137,6 +171,7 @@ class VMwareManager:
 
     def get_vm_performance(self, vm_name: str) -> Dict[str, Any]:
         """Retrieve performance data (CPU, memory, storage, and network) for the specified virtual machine."""
+        self._ensure_connected()
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
@@ -180,6 +215,7 @@ class VMwareManager:
 
     def get_vm_details(self, vm_name: str) -> Dict[str, Any]:
         """Get detailed information about a specific virtual machine."""
+        self._ensure_connected()
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
@@ -232,6 +268,7 @@ class VMwareManager:
 
     def list_templates(self) -> list:
         """List all virtual machine templates."""
+        self._ensure_connected()
         templates = []
         container = self.content.viewManager.CreateContainerView(self.content.rootFolder, [vim.VirtualMachine], True)
         for vm in container.view:
@@ -242,6 +279,7 @@ class VMwareManager:
 
     def list_datastores(self) -> list:
         """List all datastores with their details."""
+        self._ensure_connected()
         datastores = []
         container = self.content.viewManager.CreateContainerView(self.content.rootFolder, [vim.Datastore], True)
         for ds in container.view:
@@ -259,6 +297,7 @@ class VMwareManager:
 
     def list_networks(self) -> list:
         """List all networks."""
+        self._ensure_connected()
         networks = []
         container = self.content.viewManager.CreateContainerView(self.content.rootFolder, [vim.Network], True)
         for net in container.view:
@@ -278,6 +317,7 @@ class VMwareManager:
 
     def list_hosts(self) -> list:
         """List all ESXi hosts."""
+        self._ensure_connected()
         hosts = []
         container = self.content.viewManager.CreateContainerView(self.content.rootFolder, [vim.HostSystem], True)
         for host in container.view:
@@ -287,6 +327,7 @@ class VMwareManager:
 
     def find_host(self, name: str) -> Optional[vim.HostSystem]:
         """Find host object by name."""
+        self._ensure_connected()
         container = self.content.viewManager.CreateContainerView(self.content.rootFolder, [vim.HostSystem], True)
         host_obj = None
         for host in container.view:
@@ -298,6 +339,7 @@ class VMwareManager:
 
     def get_host_details(self, host_name: str) -> Dict[str, Any]:
         """Get detailed information about a specific host."""
+        self._ensure_connected()
         host = self.find_host(host_name)
         if not host:
             raise Exception(f"Host {host_name} not found")
@@ -324,6 +366,7 @@ class VMwareManager:
 
     def get_host_performance_metrics(self, host_name: str) -> Dict[str, Any]:
         """Get performance metrics for a specific host."""
+        self._ensure_connected()
         host = self.find_host(host_name)
         if not host:
             raise Exception(f"Host {host_name} not found")
@@ -338,6 +381,7 @@ class VMwareManager:
 
     def get_host_hardware_health(self, host_name: str) -> Dict[str, Any]:
         """Get hardware health information for a specific host."""
+        self._ensure_connected()
         host = self.find_host(host_name)
         if not host:
             raise Exception(f"Host {host_name} not found")
@@ -367,6 +411,7 @@ class VMwareManager:
 
     def get_host_performance(self, host_name: str) -> Dict[str, Any]:
         """Get detailed performance data for a specific host."""
+        self._ensure_connected()
         host = self.find_host(host_name)
         if not host:
             raise Exception(f"Host {host_name} not found")
@@ -393,6 +438,7 @@ class VMwareManager:
 
     def list_performance_counters(self) -> list:
         """List available performance counters."""
+        self._ensure_connected()
         counters = []
         pm = self.content.perfManager
         
@@ -412,6 +458,7 @@ class VMwareManager:
 
     def get_vm_summary_stats(self, vm_name: str) -> Dict[str, Any]:
         """Get summary statistics for a virtual machine."""
+        self._ensure_connected()
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
@@ -432,6 +479,7 @@ class VMwareManager:
 
     def create_vm(self, name: str, cpus: int, memory_mb: int, datastore: Optional[str] = None, network: Optional[str] = None) -> str:
         """Create a new virtual machine (from scratch, with an empty disk and optional network)."""
+        self._ensure_connected()
         # If a specific datastore or network is provided, update the corresponding object accordingly
         datastore_obj = self.datastore_obj
         network_obj = self.network_obj
@@ -515,6 +563,7 @@ class VMwareManager:
 
     def clone_vm(self, template_name: str, new_name: str) -> str:
         """Clone a new virtual machine from an existing template or VM."""
+        self._ensure_connected()
         template_vm = self.find_vm(template_name)
         if not template_vm:
             raise Exception(f"Template virtual machine {template_name} not found")
@@ -542,6 +591,7 @@ class VMwareManager:
                         network: Optional[str] = None, thin_provisioned: bool = True,
                         annotation: Optional[str] = None) -> str:
         """Create a custom virtual machine with more configuration options."""
+        self._ensure_connected()
         # If a specific datastore or network is provided, update the corresponding object accordingly
         datastore_obj = self.datastore_obj
         network_obj = self.network_obj
@@ -623,6 +673,7 @@ class VMwareManager:
 
     def delete_vm(self, name: str) -> str:
         """Delete the specified virtual machine."""
+        self._ensure_connected()
         vm = self.find_vm(name)
         if not vm:
             raise Exception(f"Virtual machine {name} not found")
@@ -640,6 +691,7 @@ class VMwareManager:
 
     def power_on_vm(self, name: str) -> str:
         """Power on the specified virtual machine."""
+        self._ensure_connected()
         vm = self.find_vm(name)
         if not vm:
             raise Exception(f"Virtual machine {name} not found")
@@ -655,6 +707,7 @@ class VMwareManager:
 
     def power_off_vm(self, name: str) -> str:
         """Power off the specified virtual machine."""
+        self._ensure_connected()
         vm = self.find_vm(name)
         if not vm:
             raise Exception(f"Virtual machine {name} not found")
@@ -670,6 +723,7 @@ class VMwareManager:
 
     def list_datastore_clusters(self) -> list:
         """List all datastore clusters (StoragePods)."""
+        self._ensure_connected()
         clusters = []
         container = self.content.viewManager.CreateContainerView(
             self.content.rootFolder, [vim.StoragePod], True)
@@ -686,7 +740,6 @@ class VMwareManager:
 
     def wait_for_task(self, task: vim.Task, timeout: int = 300) -> Dict[str, Any]:
         """Wait for a vCenter task to complete or timeout."""
-        import time
         start_time = time.time()
         while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
             if time.time() - start_time > timeout:
@@ -710,9 +763,10 @@ class VMwareManager:
                 "error": str(task.info.error) if task.info.error else None
             }
 
-    def create_snapshot(self, vm_name: str, snapshot_name: str, description: str = "", 
+    def create_snapshot(self, vm_name: str, snapshot_name: str, description: str = "",
                        memory: bool = False, quiesce: bool = False) -> str:
         """Create a snapshot of a virtual machine."""
+        self._ensure_connected()
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
@@ -728,6 +782,7 @@ class VMwareManager:
 
     def remove_snapshot(self, vm_name: str, snapshot_name: str, remove_children: bool = True) -> str:
         """Remove a snapshot from a virtual machine."""
+        self._ensure_connected()
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
@@ -750,6 +805,7 @@ class VMwareManager:
 
     def revert_snapshot(self, vm_name: str, snapshot_name: str) -> str:
         """Revert a virtual machine to a specific snapshot."""
+        self._ensure_connected()
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
@@ -772,6 +828,7 @@ class VMwareManager:
 
     def list_snapshots(self, vm_name: str) -> list:
         """List all snapshots for a virtual machine."""
+        self._ensure_connected()
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
@@ -785,6 +842,7 @@ class VMwareManager:
 
     def remove_all_snapshots(self, vm_name: str) -> str:
         """Remove all snapshots from a virtual machine."""
+        self._ensure_connected()
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
@@ -826,12 +884,12 @@ class VMwareManager:
             if snapshot.childSnapshotList:
                 self._collect_snapshots(snapshot.childSnapshotList, result, level + 1)
 
-    def execute_program_in_vm(self, vm_name: str, username: str, password: str, 
+    def execute_program_in_vm(self, vm_name: str, username: str, password: str,
                              program_path: str, program_arguments: str = "") -> Dict[str, Any]:
         """Execute a program inside a VM using VMware Tools."""
-        import time
+        self._ensure_connected()
         import re
-        
+
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
@@ -894,9 +952,10 @@ class VMwareManager:
     def upload_file_to_vm(self, vm_name: str, username: str, password: str,
                          local_file_path: str, remote_file_path: str) -> str:
         """Upload a file to a VM using VMware Tools."""
+        self._ensure_connected()
         import re
         import requests
-        
+
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
@@ -940,8 +999,9 @@ class VMwareManager:
     def upload_file_to_datastore(self, datastore_name: str, local_file_path: str,
                                  remote_file_path: str) -> str:
         """Upload a file to a datastore."""
+        self._ensure_connected()
         import requests
-        
+
         # Find the datastore
         datastore = None
         container = self.content.viewManager.CreateContainerView(
@@ -997,10 +1057,11 @@ class VMwareManager:
     def deploy_ovf(self, ovf_path: str, vmdk_path: str, vm_name: str = None,
                    datastore_name: str = None, resource_pool_name: str = None) -> str:
         """Deploy a VM from OVF and VMDK files."""
+        self._ensure_connected()
         import os
         from threading import Thread
         from time import sleep
-        
+
         # Read OVF descriptor
         if not os.path.exists(ovf_path):
             raise Exception(f"OVF file not found: {ovf_path}")
@@ -1096,13 +1157,13 @@ class VMwareManager:
     def deploy_ova(self, ova_path: str, vm_name: str = None,
                    datastore_name: str = None, resource_pool_name: str = None) -> str:
         """Deploy a VM from an OVA file."""
+        self._ensure_connected()
         import os
         import tarfile
         import ssl
-        import time
         from threading import Timer
         from six.moves.urllib.request import Request, urlopen
-        
+
         # Check if OVA exists
         if not os.path.exists(ova_path):
             raise Exception(f"OVA file not found: {ova_path}")
@@ -1234,9 +1295,10 @@ class VMwareManager:
             tar.close()
             raise Exception(f"Failed to deploy OVA: {str(ex)}")
 
-    def wait_for_updates(self, object_type: str, properties: list, 
+    def wait_for_updates(self, object_type: str, properties: list,
                         max_wait_seconds: int = 30, max_iterations: int = 1) -> Dict[str, Any]:
         """Wait for property updates on vSphere objects."""
+        self._ensure_connected()
         from pyVmomi import vmodl
         
         # Parse object type
