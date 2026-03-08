@@ -74,7 +74,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
     }
 
     for env_key, cfg_key in env_map.items():
-        if env_key in os.environ:
+        if env_key in os.environ and os.environ[env_key]:
             val = os.environ[env_key]
             # Boolean type conversion
             if cfg_key in ("insecure", "saml_enabled", "experimental_tools"):
