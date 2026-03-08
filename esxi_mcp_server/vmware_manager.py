@@ -27,6 +27,19 @@ class VMwareManager:
         self.authenticated = False   # Authentication flag for API key verification
         self._connect_vcenter()
 
+    @staticmethod
+    def _get_all_datastores(folder):
+        """Recursively collect all Datastore objects from a folder hierarchy."""
+        datastores = []
+        for child in folder.childEntity:
+            if isinstance(child, vim.Datastore):
+                datastores.append(child)
+            elif isinstance(child, vim.Folder):
+                datastores.extend(VMwareManager._get_all_datastores(child))
+            elif isinstance(child, vim.StoragePod):
+                datastores.extend(child.childEntity)
+        return datastores
+
     def _connect_vcenter(self):
         """Connect to vCenter/ESXi and retrieve main resource object references."""
         try:
@@ -89,19 +102,19 @@ class VMwareManager:
         logging.info(f"Using resource pool: {self.resource_pool.name}")
 
         # Retrieve datastore object
+        datastores = self._get_all_datastores(self.datacenter_obj.datastoreFolder)
         if self.config.datastore:
             # Find specified datastore in the datacenter
-            self.datastore_obj = next((ds for ds in self.datacenter_obj.datastoreFolder.childEntity
-                                       if isinstance(ds, vim.Datastore) and ds.name == self.config.datastore), None)
+            self.datastore_obj = next((ds for ds in datastores
+                                       if ds.name == self.config.datastore), None)
             if not self.datastore_obj:
-                logging.error(f"Datastore named {self.config.datastore} not found")
-                raise Exception(f"Datastore {self.config.datastore} not found")
+                available = [ds.name for ds in datastores]
+                logging.error(f"Datastore named {self.config.datastore} not found. Available: {available}")
+                raise Exception(f"Datastore {self.config.datastore} not found. Available: {available}")
         else:
-            # Default to the datastore with the largest available capacity
-            datastores = [ds for ds in self.datacenter_obj.datastoreFolder.childEntity if isinstance(ds, vim.Datastore)]
             if not datastores:
                 raise Exception("No available datastore found in the datacenter")
-            # Select the one with the maximum free space
+            # Default to the datastore with the largest available capacity
             self.datastore_obj = max(datastores, key=lambda ds: ds.summary.freeSpace)
         logging.info(f"Using datastore: {self.datastore_obj.name}")
 
