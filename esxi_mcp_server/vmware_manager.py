@@ -624,7 +624,7 @@ class VMwareManager:
         logging.info(f"Virtual machine created: {name}")
         return f"VM '{name}' created."
 
-    def clone_vm(self, template_name: str, new_name: str, folder: Optional[str] = None, resource_pool: Optional[str] = None) -> str:
+    def clone_vm(self, template_name: str, new_name: str, folder: Optional[str] = None, resource_pool: Optional[str] = None, datastore: Optional[str] = None) -> str:
         """Clone a new virtual machine from an existing template or VM."""
         self._ensure_connected()
         template_vm = self.find_vm(template_name)
@@ -645,7 +645,14 @@ class VMwareManager:
                 raise Exception(f"Resource pool '{resource_pool}' not found")
         else:
             pool_obj = template_vm.resourcePool or self.resource_pool
-        relocate_spec = vim.vm.RelocateSpec(pool=pool_obj, datastore=self.datastore_obj)
+        # Resolve datastore
+        if datastore:
+            datastore_obj = self.find_datastore(datastore)
+            if not datastore_obj:
+                raise Exception(f"Specified datastore {datastore} not found")
+        else:
+            datastore_obj = self.datastore_obj
+        relocate_spec = vim.vm.RelocateSpec(pool=pool_obj, datastore=datastore_obj)
         clone_spec = vim.vm.CloneSpec(powerOn=False, template=False, location=relocate_spec)
         try:
             task = template_vm.Clone(folder=vm_folder, name=new_name, spec=clone_spec)

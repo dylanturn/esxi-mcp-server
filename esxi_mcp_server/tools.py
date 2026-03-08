@@ -26,10 +26,10 @@ class ToolHandlers:
         self._check_auth()
         return self.manager.create_vm(name, cpu, memory, datastore, network, folder, resource_pool, serial_console)
 
-    def clone_vm(self, template_name: str, new_name: str, folder: Optional[str] = None, resource_pool: Optional[str] = None) -> str:
+    def clone_vm(self, template_name: str, new_name: str, folder: Optional[str] = None, resource_pool: Optional[str] = None, datastore: Optional[str] = None) -> str:
         """Clone a virtual machine from a template."""
         self._check_auth()
-        return self.manager.clone_vm(template_name, new_name, folder, resource_pool)
+        return self.manager.clone_vm(template_name, new_name, folder, resource_pool, datastore)
     
     def delete_vm(self, name: str) -> str:
         """Delete the specified virtual machine."""

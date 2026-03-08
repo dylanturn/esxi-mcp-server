@@ -49,7 +49,8 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                     "template_name": {"type": "string", "description": "Name of the template or VM to clone"},
                     "new_name": {"type": "string", "description": "Name for the new VM"},
                     "folder": {"type": "string", "description": "Target VM folder name (optional)"},
-                    "resource_pool": {"type": "string", "description": "Target resource pool name (optional)"}
+                    "resource_pool": {"type": "string", "description": "Target resource pool name (optional)"},
+                    "datastore": {"type": "string", "description": "Target datastore name (optional)"}
                 },
                 "required": ["template_name", "new_name"]
             }
