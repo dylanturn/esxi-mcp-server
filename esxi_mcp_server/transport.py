@@ -95,7 +95,7 @@ async def create_asgi_app(mcp_server, config: Config):
         if scope["type"] == "http":
             path = scope.get("path", "")
             method = scope.get("method", "").upper()
-            if path == "/message" and method in ("GET", "POST", "OPTIONS"):
+            if path == "/mcp" and method in ("GET", "POST", "OPTIONS"):
                 # Streamable HTTP endpoint for MCP
                 if method == "OPTIONS":
                     # Return allowed methods for CORS
