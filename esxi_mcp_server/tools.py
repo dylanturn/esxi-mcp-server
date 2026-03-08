@@ -21,15 +21,15 @@ class ToolHandlers:
             if not self.manager.authenticated:
                 raise Exception("Unauthorized: API key required.")
     
-    def create_vm(self, name: str, cpu: int, memory: int, datastore: Optional[str] = None, network: Optional[str] = None) -> str:
+    def create_vm(self, name: str, cpu: int, memory: int, datastore: Optional[str] = None, network: Optional[str] = None, folder: Optional[str] = None, resource_pool: Optional[str] = None, serial_console: bool = False, datastore_cluster: Optional[str] = None) -> str:
         """Create a new virtual machine."""
         self._check_auth()
-        return self.manager.create_vm(name, cpu, memory, datastore, network)
-    
-    def clone_vm(self, template_name: str, new_name: str) -> str:
+        return self.manager.create_vm(name, cpu, memory, datastore, network, folder, resource_pool, serial_console, datastore_cluster)
+
+    def clone_vm(self, template_name: str, new_name: str, folder: Optional[str] = None, resource_pool: Optional[str] = None, datastore: Optional[str] = None, datastore_cluster: Optional[str] = None) -> str:
         """Clone a virtual machine from a template."""
         self._check_auth()
-        return self.manager.clone_vm(template_name, new_name)
+        return self.manager.clone_vm(template_name, new_name, folder, resource_pool, datastore, datastore_cluster)
     
     def delete_vm(self, name: str) -> str:
         """Delete the specified virtual machine."""
@@ -69,11 +69,29 @@ class ToolHandlers:
     def create_vm_custom(self, name: str, cpu: int, memory: int, disk_size_gb: int = 10,
                         guest_id: str = "otherGuest", datastore: Optional[str] = None,
                         network: Optional[str] = None, thin_provisioned: bool = True,
-                        annotation: Optional[str] = None) -> str:
+                        annotation: Optional[str] = None, folder: Optional[str] = None,
+                        resource_pool: Optional[str] = None, serial_console: bool = False,
+                        datastore_cluster: Optional[str] = None) -> str:
         """Create a custom virtual machine with advanced options."""
         self._check_auth()
         return self.manager.create_vm_custom(name, cpu, memory, disk_size_gb, guest_id,
-                                            datastore, network, thin_provisioned, annotation)
+                                            datastore, network, thin_provisioned, annotation, folder, resource_pool, serial_console, datastore_cluster)
+
+    def capture_vm_screenshot(self, vm_name: str) -> dict:
+        """Capture a screenshot of the VM console."""
+        self._check_auth()
+        return self.manager.capture_vm_screenshot(vm_name)
+
+    def add_vm_serial_port(self, vm_name: str, output_file: str = None) -> str:
+        """Add a file-backed serial port to a VM."""
+        self._check_auth()
+        return self.manager.add_vm_serial_port(vm_name, output_file)
+
+    def read_vm_serial_console(self, vm_name: str, tail_lines: int = 50,
+                               offset_bytes: int = 0) -> dict:
+        """Read the serial console log for a VM."""
+        self._check_auth()
+        return self.manager.read_vm_serial_console(vm_name, tail_lines, offset_bytes)
     
     def list_templates(self) -> list:
         """List all virtual machine templates."""
@@ -151,19 +169,23 @@ class ToolHandlers:
         self._check_auth()
         return self.manager.remove_all_snapshots(vm_name)
     
-    def execute_program_in_vm(self, vm_name: str, username: str, password: str,
-                             program_path: str, program_arguments: str = "") -> dict:
+    def execute_program_in_vm(self, vm_name: str, program_path: str,
+                             program_arguments: str = "",
+                             username: str = None,
+                             password: str = None) -> dict:
         """Execute a program inside a VM."""
         self._check_auth()
-        return self.manager.execute_program_in_vm(vm_name, username, password,
-                                                 program_path, program_arguments)
-    
-    def upload_file_to_vm(self, vm_name: str, username: str, password: str,
-                         local_file_path: str, remote_file_path: str) -> str:
+        return self.manager.execute_program_in_vm(
+            vm_name, program_path, program_arguments, username, password)
+
+    def upload_file_to_vm(self, vm_name: str, local_file_path: str,
+                         remote_file_path: str,
+                         username: str = None,
+                         password: str = None) -> str:
         """Upload a file to a VM."""
         self._check_auth()
-        return self.manager.upload_file_to_vm(vm_name, username, password,
-                                             local_file_path, remote_file_path)
+        return self.manager.upload_file_to_vm(
+            vm_name, local_file_path, remote_file_path, username, password)
     
     def upload_file_to_datastore(self, datastore_name: str, local_file_path: str,
                                  remote_file_path: str) -> str:

@@ -17,6 +17,7 @@ class Config:
     datastore: Optional[str] = None    # Datastore name (optional)
     network: Optional[str] = None      # Virtual network name (optional)
     insecure: bool = False             # Whether to skip SSL certificate verification (default: False)
+    saml_enabled: bool = False         # Use SAML token auth for guest ops when credentials are omitted
     api_key: Optional[str] = None      # API access key for authentication
     log_file: Optional[str] = None     # Log file path (if not specified, output to console)
     log_level: str = "INFO"            # Log level
@@ -62,6 +63,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         "VCENTER_DATASTORE": "datastore",
         "VCENTER_NETWORK": "network",
         "VCENTER_INSECURE": "insecure",
+        "VMWARE_SAML_ENABLED": "saml_enabled",
         "MCP_API_KEY": "api_key",
         "MCP_LOG_FILE": "log_file",
         "MCP_LOG_LEVEL": "log_level",
@@ -73,7 +75,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         if env_key in os.environ:
             val = os.environ[env_key]
             # Boolean type conversion
-            if cfg_key == "insecure":
+            if cfg_key in ("insecure", "saml_enabled"):
                 config_data[cfg_key] = val.lower() in ("1", "true", "yes")
             elif cfg_key == "max_retries":
                 config_data[cfg_key] = int(val)

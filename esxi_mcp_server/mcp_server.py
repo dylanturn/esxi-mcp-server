@@ -31,8 +31,12 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                     "name": {"type": "string", "description": "VM name"},
                     "cpu": {"type": "integer", "description": "Number of CPUs"},
                     "memory": {"type": "integer", "description": "Memory in MB"},
-                    "datastore": {"type": "string", "description": "Datastore name (optional)"},
-                    "network": {"type": "string", "description": "Network name (optional)"}
+                    "datastore": {"type": "string", "description": "Datastore name (optional, takes precedence over datastore_cluster)"},
+                    "datastore_cluster": {"type": "string", "description": "Datastore cluster (StoragePod) name — picks the datastore with most free space (optional)"},
+                    "network": {"type": "string", "description": "Network name (optional)"},
+                    "folder": {"type": "string", "description": "Target VM folder name (optional)"},
+                    "resource_pool": {"type": "string", "description": "Target resource pool name (optional)"},
+                    "serial_console": {"type": "boolean", "description": "Add a file-backed serial port for console logging", "default": False}
                 },
                 "required": ["name", "cpu", "memory"]
             }
@@ -44,7 +48,11 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                 "type": "object",
                 "properties": {
                     "template_name": {"type": "string", "description": "Name of the template or VM to clone"},
-                    "new_name": {"type": "string", "description": "Name for the new VM"}
+                    "new_name": {"type": "string", "description": "Name for the new VM"},
+                    "folder": {"type": "string", "description": "Target VM folder name (optional)"},
+                    "resource_pool": {"type": "string", "description": "Target resource pool name (optional)"},
+                    "datastore": {"type": "string", "description": "Target datastore name (optional, takes precedence over datastore_cluster)"},
+                    "datastore_cluster": {"type": "string", "description": "Datastore cluster (StoragePod) name — picks the datastore with most free space (optional)"}
                 },
                 "required": ["template_name", "new_name"]
             }
@@ -125,10 +133,14 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                     "memory": {"type": "integer", "description": "Memory in MB"},
                     "disk_size_gb": {"type": "integer", "description": "Disk size in GB", "default": 10},
                     "guest_id": {"type": "string", "description": "Guest OS identifier", "default": "otherGuest"},
-                    "datastore": {"type": "string", "description": "Datastore name (optional)"},
+                    "datastore": {"type": "string", "description": "Datastore name (optional, takes precedence over datastore_cluster)"},
+                    "datastore_cluster": {"type": "string", "description": "Datastore cluster (StoragePod) name — picks the datastore with most free space (optional)"},
                     "network": {"type": "string", "description": "Network name (optional)"},
                     "thin_provisioned": {"type": "boolean", "description": "Use thin provisioning", "default": True},
-                    "annotation": {"type": "string", "description": "VM annotation/description"}
+                    "annotation": {"type": "string", "description": "VM annotation/description"},
+                    "folder": {"type": "string", "description": "Target VM folder name (optional)"},
+                    "resource_pool": {"type": "string", "description": "Target resource pool name (optional)"},
+                    "serial_console": {"type": "boolean", "description": "Add a file-backed serial port for console logging", "default": False}
                 },
                 "required": ["name", "cpu", "memory"]
             }
@@ -271,32 +283,40 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
         ),
         "execute_program_in_vm": types.Tool(
             name="execute_program_in_vm",
-            description="Execute a program inside a VM using VMware Tools",
+            description=(
+                "Execute a program inside a VM using VMware Tools. "
+                "If username/password are omitted, authenticates via SAML "
+                "token (requires VMWARE_SAML_ENABLED=true and a guest alias "
+                "configured in the VM)."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "vm_name": {"type": "string", "description": "Name of the VM"},
-                    "username": {"type": "string", "description": "Guest OS username"},
-                    "password": {"type": "string", "description": "Guest OS password"},
                     "program_path": {"type": "string", "description": "Full path to the program in guest OS"},
-                    "program_arguments": {"type": "string", "description": "Program arguments (optional)", "default": ""}
+                    "program_arguments": {"type": "string", "description": "Program arguments (optional)", "default": ""},
+                    "username": {"type": "string", "description": "Guest OS username (optional with SAML)"},
+                    "password": {"type": "string", "description": "Guest OS password (optional with SAML)"}
                 },
-                "required": ["vm_name", "username", "password", "program_path"]
+                "required": ["vm_name", "program_path"]
             }
         ),
         "upload_file_to_vm": types.Tool(
             name="upload_file_to_vm",
-            description="Upload a file to a VM using VMware Tools",
+            description=(
+                "Upload a file to a VM using VMware Tools. "
+                "If username/password are omitted, authenticates via SAML."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "vm_name": {"type": "string", "description": "Name of the VM"},
-                    "username": {"type": "string", "description": "Guest OS username"},
-                    "password": {"type": "string", "description": "Guest OS password"},
                     "local_file_path": {"type": "string", "description": "Local file path to upload"},
-                    "remote_file_path": {"type": "string", "description": "Destination path in guest OS"}
+                    "remote_file_path": {"type": "string", "description": "Destination path in guest OS"},
+                    "username": {"type": "string", "description": "Guest OS username (optional with SAML)"},
+                    "password": {"type": "string", "description": "Guest OS password (optional with SAML)"}
                 },
-                "required": ["vm_name", "username", "password", "local_file_path", "remote_file_path"]
+                "required": ["vm_name", "local_file_path", "remote_file_path"]
             }
         ),
         "upload_file_to_datastore": types.Tool(
@@ -354,6 +374,66 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
                 },
                 "required": ["object_type", "properties"]
             }
+        ),
+        "capture_vm_screenshot": types.Tool(
+            name="capture_vm_screenshot",
+            description=(
+                "Capture the VM console as a PNG screenshot. Returns base64-encoded "
+                "image data. Useful for reading boot output, BIOS screens, or "
+                "generated passwords displayed on the console."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "vm_name": {"type": "string", "description": "Name of the VM"}
+                },
+                "required": ["vm_name"]
+            }
+        ),
+        "add_vm_serial_port": types.Tool(
+            name="add_vm_serial_port",
+            description=(
+                "Add a file-backed virtual serial port to a VM. Logs all guest "
+                "console output to a datastore file. The VM should be powered off "
+                "when adding the port, or rebooted afterward."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "vm_name": {"type": "string", "description": "Name of the VM"},
+                    "output_file": {
+                        "type": "string",
+                        "description": "Datastore path for the log file. Optional — auto-derived from the VM's datastore path if omitted."
+                    }
+                },
+                "required": ["vm_name"]
+            }
+        ),
+        "read_vm_serial_console": types.Tool(
+            name="read_vm_serial_console",
+            description=(
+                "Read the serial console log for a VM. Returns text output from "
+                "the guest OS serial console. Requires a file-backed serial port "
+                "(see add_vm_serial_port). Use tail_lines for recent output or "
+                "offset_bytes for incremental reads."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "vm_name": {"type": "string", "description": "Name of the VM"},
+                    "tail_lines": {
+                        "type": "integer",
+                        "description": "Lines from end of log to return. 0 = everything from offset onward.",
+                        "default": 50
+                    },
+                    "offset_bytes": {
+                        "type": "integer",
+                        "description": "Byte offset for incremental reads.",
+                        "default": 0
+                    }
+                },
+                "required": ["vm_name"]
+            }
         )
     }
     
@@ -390,6 +470,9 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
         "deploy_ovf": lambda args: tool_handlers.deploy_ovf(**args),
         "deploy_ova": lambda args: tool_handlers.deploy_ova(**args),
         "wait_for_updates": lambda args: tool_handlers.wait_for_updates(**args),
+        "capture_vm_screenshot": lambda args: tool_handlers.capture_vm_screenshot(**args),
+        "add_vm_serial_port": lambda args: tool_handlers.add_vm_serial_port(**args),
+        "read_vm_serial_console": lambda args: tool_handlers.read_vm_serial_console(**args),
     }
     
     resources = {
@@ -417,12 +500,24 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
         handler = tool_handler_map[name]
         result = handler(arguments)
         
+        # Return screenshot as ImageContent so AI agents can interpret the image directly
+        if name == "capture_vm_screenshot" and isinstance(result, dict) and "image_base64" in result:
+            try:
+                return [types.ImageContent(
+                    type="image",
+                    data=result["image_base64"],
+                    mimeType="image/png"
+                )]
+            except Exception:
+                # Fall back to text if ImageContent is not supported
+                return [types.TextContent(type="text", text=result["image_base64"])]
+
         # Return result as text content
         if isinstance(result, (dict, list)):
             text = json.dumps(result, indent=2)
         else:
             text = str(result)
-        
+
         return [types.TextContent(type="text", text=text)]
     
     # Register resource handlers

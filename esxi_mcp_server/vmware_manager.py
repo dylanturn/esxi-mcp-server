@@ -1,7 +1,9 @@
 """VMware vSphere management using pyVmomi."""
 
+import re
 import ssl
 import time
+import base64
 import logging
 from typing import Optional, Dict, Any
 
@@ -156,6 +158,63 @@ class VMwareManager:
             vm_list.append(vm.name)
         container.Destroy()
         return vm_list
+
+    def find_resource_pool(self, pool_name: str) -> Optional[vim.ResourcePool]:
+        """Find a resource pool by name, searching the datacenter recursively."""
+        container = self.content.viewManager.CreateContainerView(
+            self.datacenter_obj, [vim.ResourcePool], True)
+        result = None
+        for rp in container.view:
+            if rp.name == pool_name:
+                result = rp
+                break
+        container.Destroy()
+        return result
+
+    def find_datastore_cluster(self, cluster_name: str) -> Optional[vim.StoragePod]:
+        """Find a datastore cluster (StoragePod) by name."""
+        container = self.content.viewManager.CreateContainerView(
+            self.datacenter_obj, [vim.StoragePod], True)
+        result = None
+        for pod in container.view:
+            if pod.name == cluster_name:
+                result = pod
+                break
+        container.Destroy()
+        return result
+
+    def _pick_datastore_from_cluster(self, pod: vim.StoragePod) -> vim.Datastore:
+        """Return the datastore with the most free space from a StoragePod."""
+        datastores = [ds for ds in pod.childEntity if isinstance(ds, vim.Datastore)]
+        if not datastores:
+            raise Exception(f"Datastore cluster '{pod.name}' has no datastores")
+        return max(datastores, key=lambda ds: ds.summary.freeSpace)
+
+    def find_datastore(self, datastore_name: str) -> Optional[vim.Datastore]:
+        """Find a datastore by name, searching top-level and inside StoragePods."""
+        container = self.content.viewManager.CreateContainerView(
+            self.datacenter_obj, [vim.Datastore], True)
+        result = None
+        for ds in container.view:
+            if ds.name == datastore_name:
+                result = ds
+                break
+        container.Destroy()
+        return result
+
+    def find_folder(self, folder_name: str) -> Optional[vim.Folder]:
+        """Find a VM folder by name, searching the datacenter's vmFolder tree recursively."""
+        def _search(folder):
+            if folder.name == folder_name:
+                return folder
+            for child in getattr(folder, 'childEntity', []):
+                if isinstance(child, vim.Folder):
+                    result = _search(child)
+                    if result is not None:
+                        return result
+            return None
+
+        return _search(self.datacenter_obj.vmFolder)
 
     def find_vm(self, name: str) -> Optional[vim.VirtualMachine]:
         """Find virtual machine object by name."""
@@ -353,7 +412,7 @@ class VMwareManager:
             "vendor": host.hardware.systemInfo.vendor if host.hardware else None,
             "model": host.hardware.systemInfo.model if host.hardware else None,
             "uuid": host.hardware.systemInfo.uuid if host.hardware else None,
-            "cpu_model": host.hardware.cpuInfo.model if host.hardware and host.hardware.cpuInfo else None,
+
             "cpu_cores": host.hardware.cpuInfo.numCpuCores if host.hardware and host.hardware.cpuInfo else 0,
             "cpu_threads": host.hardware.cpuInfo.numCpuThreads if host.hardware and host.hardware.cpuInfo else 0,
             "cpu_mhz": host.hardware.cpuInfo.hz // 1000000 if host.hardware and host.hardware.cpuInfo else 0,
@@ -477,17 +536,21 @@ class VMwareManager:
         
         return stats
 
-    def create_vm(self, name: str, cpus: int, memory_mb: int, datastore: Optional[str] = None, network: Optional[str] = None) -> str:
+    def create_vm(self, name: str, cpus: int, memory_mb: int, datastore: Optional[str] = None, network: Optional[str] = None, folder: Optional[str] = None, resource_pool: Optional[str] = None, serial_console: bool = False, datastore_cluster: Optional[str] = None) -> str:
         """Create a new virtual machine (from scratch, with an empty disk and optional network)."""
         self._ensure_connected()
         # If a specific datastore or network is provided, update the corresponding object accordingly
         datastore_obj = self.datastore_obj
         network_obj = self.network_obj
         if datastore:
-            datastore_obj = next((ds for ds in self.datacenter_obj.datastoreFolder.childEntity
-                                   if isinstance(ds, vim.Datastore) and ds.name == datastore), None)
+            datastore_obj = self.find_datastore(datastore)
             if not datastore_obj:
                 raise Exception(f"Specified datastore {datastore} not found")
+        elif datastore_cluster:
+            pod = self.find_datastore_cluster(datastore_cluster)
+            if not pod:
+                raise Exception(f"Datastore cluster '{datastore_cluster}' not found")
+            datastore_obj = self._pick_datastore_from_cluster(pod)
         if network:
             networks = self.datacenter_obj.networkFolder.childEntity
             network_obj = next((net for net in networks if net.name == network), None)
@@ -496,6 +559,7 @@ class VMwareManager:
 
         # Build VM configuration specification
         vm_spec = vim.vm.ConfigSpec(name=name, memoryMB=memory_mb, numCPUs=cpus, guestId="otherGuest")  # guestId can be adjusted as needed
+        vm_spec.files = vim.vm.FileInfo(vmPathName=f"[{datastore_obj.name}]")
         device_specs = []
 
         # Add SCSI controller
@@ -543,13 +607,36 @@ class VMwareManager:
             nic_spec.device.connectable = vim.vm.device.VirtualDevice.ConnectInfo(startConnected=True, allowGuestControl=True)
             device_specs.append(nic_spec)
 
+        if serial_console:
+            serial_spec = vim.vm.device.VirtualDeviceSpec()
+            serial_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
+            serial_port = vim.vm.device.VirtualSerialPort()
+            serial_port.yieldOnPoll = True
+            backing = vim.vm.device.VirtualSerialPort.FileBackingInfo()
+            backing.fileName = f"[{datastore_obj.name}] {name}/serial.log"
+            serial_port.backing = backing
+            serial_spec.device = serial_port
+            device_specs.append(serial_spec)
+
         vm_spec.deviceChange = device_specs
 
         # Get the folder in which to place the VM (default is the datacenter's vmFolder)
-        vm_folder = self.datacenter_obj.vmFolder
+        if folder:
+            vm_folder = self.find_folder(folder)
+            if not vm_folder:
+                raise Exception(f"VM folder '{folder}' not found")
+        else:
+            vm_folder = self.datacenter_obj.vmFolder
+        # Resolve resource pool
+        if resource_pool:
+            pool_obj = self.find_resource_pool(resource_pool)
+            if not pool_obj:
+                raise Exception(f"Resource pool '{resource_pool}' not found")
+        else:
+            pool_obj = self.resource_pool
         # Create the VM in the specified resource pool
         try:
-            task = vm_folder.CreateVM_Task(config=vm_spec, pool=self.resource_pool)
+            task = vm_folder.CreateVM_Task(config=vm_spec, pool=pool_obj)
             # Wait for the task to complete
             while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
                 continue
@@ -561,18 +648,40 @@ class VMwareManager:
         logging.info(f"Virtual machine created: {name}")
         return f"VM '{name}' created."
 
-    def clone_vm(self, template_name: str, new_name: str) -> str:
+    def clone_vm(self, template_name: str, new_name: str, folder: Optional[str] = None, resource_pool: Optional[str] = None, datastore: Optional[str] = None, datastore_cluster: Optional[str] = None) -> str:
         """Clone a new virtual machine from an existing template or VM."""
         self._ensure_connected()
         template_vm = self.find_vm(template_name)
         if not template_vm:
             raise Exception(f"Template virtual machine {template_name} not found")
-        vm_folder = template_vm.parent  # Place the new VM in the same folder as the template
-        if not isinstance(vm_folder, vim.Folder):
-            vm_folder = self.datacenter_obj.vmFolder
-        # Use the resource pool of the host/cluster where the template is located
-        resource_pool = template_vm.resourcePool or self.resource_pool
-        relocate_spec = vim.vm.RelocateSpec(pool=resource_pool, datastore=self.datastore_obj)
+        if folder:
+            vm_folder = self.find_folder(folder)
+            if not vm_folder:
+                raise Exception(f"VM folder '{folder}' not found")
+        else:
+            vm_folder = template_vm.parent  # Place the new VM in the same folder as the template
+            if not isinstance(vm_folder, vim.Folder):
+                vm_folder = self.datacenter_obj.vmFolder
+        # Resolve resource pool
+        if resource_pool:
+            pool_obj = self.find_resource_pool(resource_pool)
+            if not pool_obj:
+                raise Exception(f"Resource pool '{resource_pool}' not found")
+        else:
+            pool_obj = template_vm.resourcePool or self.resource_pool
+        # Resolve datastore
+        if datastore:
+            datastore_obj = self.find_datastore(datastore)
+            if not datastore_obj:
+                raise Exception(f"Specified datastore {datastore} not found")
+        elif datastore_cluster:
+            pod = self.find_datastore_cluster(datastore_cluster)
+            if not pod:
+                raise Exception(f"Datastore cluster '{datastore_cluster}' not found")
+            datastore_obj = self._pick_datastore_from_cluster(pod)
+        else:
+            datastore_obj = self.datastore_obj
+        relocate_spec = vim.vm.RelocateSpec(pool=pool_obj, datastore=datastore_obj)
         clone_spec = vim.vm.CloneSpec(powerOn=False, template=False, location=relocate_spec)
         try:
             task = template_vm.Clone(folder=vm_folder, name=new_name, spec=clone_spec)
@@ -589,17 +698,23 @@ class VMwareManager:
     def create_vm_custom(self, name: str, cpus: int, memory_mb: int, disk_size_gb: int = 10,
                         guest_id: str = "otherGuest", datastore: Optional[str] = None,
                         network: Optional[str] = None, thin_provisioned: bool = True,
-                        annotation: Optional[str] = None) -> str:
+                        annotation: Optional[str] = None, folder: Optional[str] = None,
+                        resource_pool: Optional[str] = None, serial_console: bool = False,
+                        datastore_cluster: Optional[str] = None) -> str:
         """Create a custom virtual machine with more configuration options."""
         self._ensure_connected()
         # If a specific datastore or network is provided, update the corresponding object accordingly
         datastore_obj = self.datastore_obj
         network_obj = self.network_obj
         if datastore:
-            datastore_obj = next((ds for ds in self.datacenter_obj.datastoreFolder.childEntity
-                                   if isinstance(ds, vim.Datastore) and ds.name == datastore), None)
+            datastore_obj = self.find_datastore(datastore)
             if not datastore_obj:
                 raise Exception(f"Specified datastore {datastore} not found")
+        elif datastore_cluster:
+            pod = self.find_datastore_cluster(datastore_cluster)
+            if not pod:
+                raise Exception(f"Datastore cluster '{datastore_cluster}' not found")
+            datastore_obj = self._pick_datastore_from_cluster(pod)
         if network:
             networks = self.datacenter_obj.networkFolder.childEntity
             network_obj = next((net for net in networks if net.name == network), None)
@@ -608,9 +723,10 @@ class VMwareManager:
 
         # Build VM configuration specification
         vm_spec = vim.vm.ConfigSpec(name=name, memoryMB=memory_mb, numCPUs=cpus, guestId=guest_id)
+        vm_spec.files = vim.vm.FileInfo(vmPathName=f"[{datastore_obj.name}]")
         if annotation:
             vm_spec.annotation = annotation
-        
+
         device_specs = []
 
         # Add SCSI controller
@@ -655,12 +771,35 @@ class VMwareManager:
             nic_spec.device.connectable = vim.vm.device.VirtualDevice.ConnectInfo(startConnected=True, allowGuestControl=True)
             device_specs.append(nic_spec)
 
+        if serial_console:
+            serial_spec = vim.vm.device.VirtualDeviceSpec()
+            serial_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
+            serial_port = vim.vm.device.VirtualSerialPort()
+            serial_port.yieldOnPoll = True
+            backing = vim.vm.device.VirtualSerialPort.FileBackingInfo()
+            backing.fileName = f"[{datastore_obj.name}] {name}/serial.log"
+            serial_port.backing = backing
+            serial_spec.device = serial_port
+            device_specs.append(serial_spec)
+
         vm_spec.deviceChange = device_specs
 
         # Get the folder in which to place the VM
-        vm_folder = self.datacenter_obj.vmFolder
+        if folder:
+            vm_folder = self.find_folder(folder)
+            if not vm_folder:
+                raise Exception(f"VM folder '{folder}' not found")
+        else:
+            vm_folder = self.datacenter_obj.vmFolder
+        # Resolve resource pool
+        if resource_pool:
+            pool_obj = self.find_resource_pool(resource_pool)
+            if not pool_obj:
+                raise Exception(f"Resource pool '{resource_pool}' not found")
+        else:
+            pool_obj = self.resource_pool
         try:
-            task = vm_folder.CreateVM_Task(config=vm_spec, pool=self.resource_pool)
+            task = vm_folder.CreateVM_Task(config=vm_spec, pool=pool_obj)
             while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
                 continue
             if task.info.state == vim.TaskInfo.State.error:
@@ -884,26 +1023,25 @@ class VMwareManager:
             if snapshot.childSnapshotList:
                 self._collect_snapshots(snapshot.childSnapshotList, result, level + 1)
 
-    def execute_program_in_vm(self, vm_name: str, username: str, password: str,
-                             program_path: str, program_arguments: str = "") -> Dict[str, Any]:
+    def execute_program_in_vm(self, vm_name: str, program_path: str,
+                             program_arguments: str = "",
+                             username: str = None,
+                             password: str = None) -> Dict[str, Any]:
         """Execute a program inside a VM using VMware Tools."""
         self._ensure_connected()
-        import re
 
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
-        
+
         # Check VMware Tools status
         tools_status = vm.guest.toolsStatus
         if tools_status in ('toolsNotInstalled', 'toolsNotRunning'):
             raise Exception(
                 "VMware Tools is either not running or not installed. "
                 "Ensure VMware Tools is running before executing programs.")
-        
-        # Create credentials
-        creds = vim.vm.guest.NamePasswordAuthentication(
-            username=username, password=password)
+
+        creds = self._get_guest_credentials(username, password)
         
         # Get process manager
         process_manager = self.content.guestOperationsManager.processManager
@@ -949,26 +1087,25 @@ class VMwareManager:
         else:
             raise Exception("Failed to start program in VM")
 
-    def upload_file_to_vm(self, vm_name: str, username: str, password: str,
-                         local_file_path: str, remote_file_path: str) -> str:
+    def upload_file_to_vm(self, vm_name: str, local_file_path: str,
+                         remote_file_path: str,
+                         username: str = None,
+                         password: str = None) -> str:
         """Upload a file to a VM using VMware Tools."""
         self._ensure_connected()
-        import re
         import requests
 
         vm = self.find_vm(vm_name)
         if not vm:
             raise Exception(f"VM {vm_name} not found")
-        
+
         # Check VMware Tools status
         tools_status = vm.guest.toolsStatus
         if tools_status in ('toolsNotInstalled', 'toolsNotRunning'):
             raise Exception(
                 "VMware Tools is either not running or not installed.")
-        
-        # Create credentials
-        creds = vim.vm.guest.NamePasswordAuthentication(
-            username=username, password=password)
+
+        creds = self._get_guest_credentials(username, password)
         
         # Read the local file
         with open(local_file_path, 'rb') as f:
@@ -1026,17 +1163,9 @@ class VMwareManager:
         }
         http_url = f"https://{self.config.vcenter_host}:443{resource}"
         
-        # Get the session cookie
-        client_cookie = self.si._stub.cookie
-        cookie_name = client_cookie.split("=", 1)[0]
-        cookie_value = client_cookie.split("=", 1)[1].split(";", 1)[0]
-        cookie_path = client_cookie.split("=", 1)[1].split(";", 1)[1].split(";", 1)[0].lstrip()
-        cookie_text = " " + cookie_value + "; $" + cookie_path
-        cookie = {cookie_name: cookie_text}
-        
         # Set headers
         headers = {'Content-Type': 'application/octet-stream'}
-        
+
         # Upload the file
         with open(local_file_path, "rb") as file_data:
             resp = requests.put(
@@ -1044,7 +1173,7 @@ class VMwareManager:
                 params=params,
                 data=file_data,
                 headers=headers,
-                cookies=cookie,
+                cookies=self._get_session_cookies(),
                 verify=False
             )
         
@@ -1419,5 +1548,244 @@ class VMwareManager:
             vmodl.query.PropertyCollector.SelectionSpec(name='dcToVmFolder'),
             vmodl.query.PropertyCollector.SelectionSpec(name='dcToHostFolder')
         ]
-        
+
         return [folder_to_child, dc_to_vmfolder, dc_to_hostfolder]
+
+    def _acquire_saml_token(self) -> str:
+        """Acquire a SAML bearer token from the vCenter STS."""
+        import requests
+        import xml.etree.ElementTree as ET
+        from datetime import datetime, timezone, timedelta
+
+        now = datetime.now(timezone.utc)
+        created = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        expires = (now + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+        sts_url = f"https://{self.config.vcenter_host}/sts/STSService/vsphere.local"
+
+        soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
+            xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+            xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
+            xmlns:wst="http://docs.oasis-open.org/ws-sx/ws-trust/200512">
+  <s:Header>
+    <wsse:Security>
+      <wsu:Timestamp>
+        <wsu:Created>{created}</wsu:Created>
+        <wsu:Expires>{expires}</wsu:Expires>
+      </wsu:Timestamp>
+      <wsse:UsernameToken>
+        <wsse:Username>{self.config.vcenter_user}</wsse:Username>
+        <wsse:Password>{self.config.vcenter_password}</wsse:Password>
+      </wsse:UsernameToken>
+    </wsse:Security>
+  </s:Header>
+  <s:Body>
+    <wst:RequestSecurityToken>
+      <wst:RequestType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue</wst:RequestType>
+      <wst:TokenType>urn:oasis:names:tc:SAML:2.0:assertion</wst:TokenType>
+      <wst:KeyType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Bearer</wst:KeyType>
+      <wst:Lifetime>
+        <wsu:Created>{created}</wsu:Created>
+        <wsu:Expires>{expires}</wsu:Expires>
+      </wst:Lifetime>
+      <wst:Renewing Allow="true" OK="true"/>
+    </wst:RequestSecurityToken>
+  </s:Body>
+</s:Envelope>"""
+
+        headers = {
+            "Content-Type": "text/xml; charset=utf-8",
+            "SOAPAction": "http://docs.oasis-open.org/ws-sx/ws-trust/200512/RST/Issue",
+        }
+
+        resp = requests.post(
+            sts_url, data=soap_body, headers=headers,
+            verify=not self.config.insecure
+        )
+        if resp.status_code != 200:
+            raise Exception(f"STS token request failed: HTTP {resp.status_code}")
+
+        root = ET.fromstring(resp.text)
+        ns = {"saml2": "urn:oasis:names:tc:SAML:2.0:assertion"}
+        assertion = root.find(".//saml2:Assertion", ns)
+        if assertion is None:
+            raise Exception("No SAML assertion found in STS response")
+
+        return ET.tostring(assertion, encoding="unicode")
+
+    def _get_guest_credentials(self, username: str = None, password: str = None):
+        """Return NamePasswordAuthentication or SAMLTokenAuthentication.
+
+        Password auth is used when both username and password are provided.
+        SAML auth is used when credentials are omitted and saml_enabled is True.
+        Otherwise raises an exception.
+        """
+        if username and password:
+            return vim.vm.guest.NamePasswordAuthentication(
+                username=username, password=password
+            )
+
+        if self.config.saml_enabled:
+            saml_token = self._acquire_saml_token()
+            return vim.vm.guest.SAMLTokenAuthentication(
+                token=saml_token,
+                username=""
+            )
+
+        raise Exception(
+            "Guest credentials required. Provide username/password "
+            "or enable SAML auth (VMWARE_SAML_ENABLED=true)."
+        )
+
+    def _get_session_cookies(self) -> dict:
+        """Return the vSphere session cookie as a dict suitable for requests."""
+        import requests  # noqa: ensure available
+        client_cookie = self.si._stub.cookie
+        cookie_name = client_cookie.split("=", 1)[0]
+        cookie_value = client_cookie.split("=", 1)[1].split(";", 1)[0]
+        cookie_path = (
+            client_cookie.split("=", 1)[1].split(";", 1)[1].split(";", 1)[0].lstrip()
+        )
+        cookie_text = " " + cookie_value + "; $" + cookie_path
+        return {cookie_name: cookie_text}
+
+    def _download_datastore_file(self, datastore_path: str) -> bytes:
+        """Download a file from a datastore path like '[dsName] path/to/file'."""
+        import requests
+        from urllib.parse import quote
+
+        match = re.match(r'\[(.+?)\]\s+(.+)', datastore_path)
+        if not match:
+            raise Exception(f"Invalid datastore path: {datastore_path}")
+
+        ds_name = match.group(1)
+        file_path = match.group(2)
+
+        url = f"https://{self.config.vcenter_host}:443/folder/{quote(file_path, safe='/')}"
+        params = {
+            "dsName": ds_name,
+            "dcPath": self.datacenter_obj.name,
+        }
+
+        resp = requests.get(url, params=params, cookies=self._get_session_cookies(), verify=False)
+        if resp.status_code != 200:
+            raise Exception(
+                f"Failed to download {datastore_path}: HTTP {resp.status_code}"
+            )
+
+        return resp.content
+
+    def capture_vm_screenshot(self, vm_name: str) -> Dict[str, Any]:
+        """Capture the VM's console as a PNG screenshot."""
+        self._ensure_connected()
+        vm = self.find_vm(vm_name)
+        if not vm:
+            raise Exception(f"VM {vm_name} not found")
+
+        task = vm.CreateScreenshot_Task()
+        while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+            time.sleep(0.5)
+        if task.info.state == vim.TaskInfo.State.error:
+            raise task.info.error
+
+        screenshot_path = task.info.result
+        image_data = self._download_datastore_file(screenshot_path)
+
+        try:
+            match = re.match(r'\[(.+?)\]\s+(.+)', screenshot_path)
+            if match:
+                self.content.fileManager.DeleteDatastoreFile_Task(
+                    name=screenshot_path,
+                    datacenter=self.datacenter_obj
+                )
+        except Exception as e:
+            logging.warning(f"Failed to clean up screenshot file: {e}")
+
+        return {
+            "datastore_path": screenshot_path,
+            "image_base64": base64.b64encode(image_data).decode("utf-8"),
+            "mime_type": "image/png",
+        }
+
+    def add_vm_serial_port(self, vm_name: str, output_file: str = None) -> str:
+        """Add a file-backed virtual serial port to a VM."""
+        self._ensure_connected()
+        vm = self.find_vm(vm_name)
+        if not vm:
+            raise Exception(f"VM {vm_name} not found")
+
+        for device in vm.config.hardware.device:
+            if isinstance(device, vim.vm.device.VirtualSerialPort):
+                return f"VM '{vm_name}' already has a serial port configured"
+
+        if not output_file:
+            vmx_path = vm.config.files.vmPathName
+            ds_match = re.match(r'\[(.+?)\]\s+(.+?)/', vmx_path)
+            if ds_match:
+                ds_name = ds_match.group(1)
+                vm_dir = ds_match.group(2)
+                output_file = f"[{ds_name}] {vm_dir}/serial.log"
+            else:
+                raise Exception(
+                    f"Could not determine datastore path from {vmx_path}"
+                )
+
+        serial_spec = vim.vm.device.VirtualDeviceSpec()
+        serial_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
+
+        serial_port = vim.vm.device.VirtualSerialPort()
+        serial_port.yieldOnPoll = True
+        backing = vim.vm.device.VirtualSerialPort.FileBackingInfo()
+        backing.fileName = output_file
+        serial_port.backing = backing
+        serial_spec.device = serial_port
+
+        config_spec = vim.vm.ConfigSpec()
+        config_spec.deviceChange = [serial_spec]
+
+        task = vm.ReconfigVM_Task(spec=config_spec)
+        while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+            time.sleep(0.5)
+        if task.info.state == vim.TaskInfo.State.error:
+            raise task.info.error
+
+        return f"Serial port added to '{vm_name}', logging to {output_file}"
+
+    def read_vm_serial_console(self, vm_name: str, tail_lines: int = 50,
+                               offset_bytes: int = 0) -> Dict[str, Any]:
+        """Read the serial console log file for a VM."""
+        self._ensure_connected()
+        vm = self.find_vm(vm_name)
+        if not vm:
+            raise Exception(f"VM {vm_name} not found")
+
+        serial_file = None
+        for device in vm.config.hardware.device:
+            if isinstance(device, vim.vm.device.VirtualSerialPort):
+                if hasattr(device.backing, 'fileName'):
+                    serial_file = device.backing.fileName
+                    break
+
+        if not serial_file:
+            raise Exception(f"VM '{vm_name}' has no file-backed serial port")
+
+        data = self._download_datastore_file(serial_file)
+
+        if offset_bytes > 0:
+            data = data[offset_bytes:]
+
+        text = data.decode("utf-8", errors="replace")
+        total_bytes = offset_bytes + len(data)
+
+        if tail_lines > 0:
+            lines = text.splitlines()
+            text = "\n".join(lines[-tail_lines:])
+
+        return {
+            "vm_name": vm_name,
+            "serial_file": serial_file,
+            "content": text,
+            "offset_bytes": total_bytes,
+            "total_bytes_read": len(data),
+        }
