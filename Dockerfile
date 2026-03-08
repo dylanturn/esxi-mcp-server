@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy all source files needed for install
-COPY requirements.txt setup.py README.md ./
+COPY requirements.txt setup.py ./
 COPY esxi_mcp_server/ ./esxi_mcp_server/
 COPY server.py .
 
@@ -46,7 +46,6 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY server.py .
 COPY esxi_mcp_server/ ./esxi_mcp_server/
 COPY setup.py .
-COPY README.md .
 COPY config.yaml.sample .
 COPY docker-entrypoint.sh .
 
