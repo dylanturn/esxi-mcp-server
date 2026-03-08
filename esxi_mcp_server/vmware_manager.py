@@ -1,7 +1,9 @@
 """VMware vSphere management using pyVmomi."""
 
+import re
 import ssl
 import time
+import base64
 import logging
 from typing import Optional, Dict, Any
 
@@ -515,7 +517,7 @@ class VMwareManager:
         
         return stats
 
-    def create_vm(self, name: str, cpus: int, memory_mb: int, datastore: Optional[str] = None, network: Optional[str] = None, folder: Optional[str] = None, resource_pool: Optional[str] = None) -> str:
+    def create_vm(self, name: str, cpus: int, memory_mb: int, datastore: Optional[str] = None, network: Optional[str] = None, folder: Optional[str] = None, resource_pool: Optional[str] = None, serial_console: bool = False) -> str:
         """Create a new virtual machine (from scratch, with an empty disk and optional network)."""
         self._ensure_connected()
         # If a specific datastore or network is provided, update the corresponding object accordingly
@@ -580,6 +582,17 @@ class VMwareManager:
                 )
             nic_spec.device.connectable = vim.vm.device.VirtualDevice.ConnectInfo(startConnected=True, allowGuestControl=True)
             device_specs.append(nic_spec)
+
+        if serial_console:
+            serial_spec = vim.vm.device.VirtualDeviceSpec()
+            serial_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
+            serial_port = vim.vm.device.VirtualSerialPort()
+            serial_port.yieldOnPoll = True
+            backing = vim.vm.device.VirtualSerialPort.FileBackingInfo()
+            backing.fileName = f"[{datastore_obj.name}] {name}/serial.log"
+            serial_port.backing = backing
+            serial_spec.device = serial_port
+            device_specs.append(serial_spec)
 
         vm_spec.deviceChange = device_specs
 
@@ -650,7 +663,7 @@ class VMwareManager:
                         guest_id: str = "otherGuest", datastore: Optional[str] = None,
                         network: Optional[str] = None, thin_provisioned: bool = True,
                         annotation: Optional[str] = None, folder: Optional[str] = None,
-                        resource_pool: Optional[str] = None) -> str:
+                        resource_pool: Optional[str] = None, serial_console: bool = False) -> str:
         """Create a custom virtual machine with more configuration options."""
         self._ensure_connected()
         # If a specific datastore or network is provided, update the corresponding object accordingly
@@ -715,6 +728,17 @@ class VMwareManager:
                 )
             nic_spec.device.connectable = vim.vm.device.VirtualDevice.ConnectInfo(startConnected=True, allowGuestControl=True)
             device_specs.append(nic_spec)
+
+        if serial_console:
+            serial_spec = vim.vm.device.VirtualDeviceSpec()
+            serial_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
+            serial_port = vim.vm.device.VirtualSerialPort()
+            serial_port.yieldOnPoll = True
+            backing = vim.vm.device.VirtualSerialPort.FileBackingInfo()
+            backing.fileName = f"[{datastore_obj.name}] {name}/serial.log"
+            serial_port.backing = backing
+            serial_spec.device = serial_port
+            device_specs.append(serial_spec)
 
         vm_spec.deviceChange = device_specs
 
@@ -1099,17 +1123,9 @@ class VMwareManager:
         }
         http_url = f"https://{self.config.vcenter_host}:443{resource}"
         
-        # Get the session cookie
-        client_cookie = self.si._stub.cookie
-        cookie_name = client_cookie.split("=", 1)[0]
-        cookie_value = client_cookie.split("=", 1)[1].split(";", 1)[0]
-        cookie_path = client_cookie.split("=", 1)[1].split(";", 1)[1].split(";", 1)[0].lstrip()
-        cookie_text = " " + cookie_value + "; $" + cookie_path
-        cookie = {cookie_name: cookie_text}
-        
         # Set headers
         headers = {'Content-Type': 'application/octet-stream'}
-        
+
         # Upload the file
         with open(local_file_path, "rb") as file_data:
             resp = requests.put(
@@ -1117,7 +1133,7 @@ class VMwareManager:
                 params=params,
                 data=file_data,
                 headers=headers,
-                cookies=cookie,
+                cookies=self._get_session_cookies(),
                 verify=False
             )
         
@@ -1492,5 +1508,155 @@ class VMwareManager:
             vmodl.query.PropertyCollector.SelectionSpec(name='dcToVmFolder'),
             vmodl.query.PropertyCollector.SelectionSpec(name='dcToHostFolder')
         ]
-        
+
         return [folder_to_child, dc_to_vmfolder, dc_to_hostfolder]
+
+    def _get_session_cookies(self) -> dict:
+        """Return the vSphere session cookie as a dict suitable for requests."""
+        import requests  # noqa: ensure available
+        client_cookie = self.si._stub.cookie
+        cookie_name = client_cookie.split("=", 1)[0]
+        cookie_value = client_cookie.split("=", 1)[1].split(";", 1)[0]
+        cookie_path = (
+            client_cookie.split("=", 1)[1].split(";", 1)[1].split(";", 1)[0].lstrip()
+        )
+        cookie_text = " " + cookie_value + "; $" + cookie_path
+        return {cookie_name: cookie_text}
+
+    def _download_datastore_file(self, datastore_path: str) -> bytes:
+        """Download a file from a datastore path like '[dsName] path/to/file'."""
+        import requests
+
+        match = re.match(r'\[(.+?)\]\s+(.+)', datastore_path)
+        if not match:
+            raise Exception(f"Invalid datastore path: {datastore_path}")
+
+        ds_name = match.group(1)
+        file_path = match.group(2)
+
+        url = (
+            f"https://{self.config.vcenter_host}/folder/{file_path}"
+            f"?dcPath={self.datacenter_obj.name}&dsName={ds_name}"
+        )
+
+        resp = requests.get(url, cookies=self._get_session_cookies(), verify=False)
+        if resp.status_code != 200:
+            raise Exception(
+                f"Failed to download {datastore_path}: HTTP {resp.status_code}"
+            )
+
+        return resp.content
+
+    def capture_vm_screenshot(self, vm_name: str) -> Dict[str, Any]:
+        """Capture the VM's console as a PNG screenshot."""
+        self._ensure_connected()
+        vm = self.find_vm(vm_name)
+        if not vm:
+            raise Exception(f"VM {vm_name} not found")
+
+        task = vm.CreateScreenshot_Task()
+        while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+            time.sleep(0.5)
+        if task.info.state == vim.TaskInfo.State.error:
+            raise task.info.error
+
+        screenshot_path = task.info.result
+        image_data = self._download_datastore_file(screenshot_path)
+
+        try:
+            match = re.match(r'\[(.+?)\]\s+(.+)', screenshot_path)
+            if match:
+                self.content.fileManager.DeleteDatastoreFile_Task(
+                    name=screenshot_path,
+                    datacenter=self.datacenter_obj
+                )
+        except Exception as e:
+            logging.warning(f"Failed to clean up screenshot file: {e}")
+
+        return {
+            "datastore_path": screenshot_path,
+            "image_base64": base64.b64encode(image_data).decode("utf-8"),
+            "mime_type": "image/png",
+        }
+
+    def add_vm_serial_port(self, vm_name: str, output_file: str = None) -> str:
+        """Add a file-backed virtual serial port to a VM."""
+        self._ensure_connected()
+        vm = self.find_vm(vm_name)
+        if not vm:
+            raise Exception(f"VM {vm_name} not found")
+
+        for device in vm.config.hardware.device:
+            if isinstance(device, vim.vm.device.VirtualSerialPort):
+                return f"VM '{vm_name}' already has a serial port configured"
+
+        if not output_file:
+            vmx_path = vm.config.files.vmPathName
+            ds_match = re.match(r'\[(.+?)\]\s+(.+?)/', vmx_path)
+            if ds_match:
+                ds_name = ds_match.group(1)
+                vm_dir = ds_match.group(2)
+                output_file = f"[{ds_name}] {vm_dir}/serial.log"
+            else:
+                raise Exception(
+                    f"Could not determine datastore path from {vmx_path}"
+                )
+
+        serial_spec = vim.vm.device.VirtualDeviceSpec()
+        serial_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.add
+
+        serial_port = vim.vm.device.VirtualSerialPort()
+        serial_port.yieldOnPoll = True
+        backing = vim.vm.device.VirtualSerialPort.FileBackingInfo()
+        backing.fileName = output_file
+        serial_port.backing = backing
+        serial_spec.device = serial_port
+
+        config_spec = vim.vm.ConfigSpec()
+        config_spec.deviceChange = [serial_spec]
+
+        task = vm.ReconfigVM_Task(spec=config_spec)
+        while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+            time.sleep(0.5)
+        if task.info.state == vim.TaskInfo.State.error:
+            raise task.info.error
+
+        return f"Serial port added to '{vm_name}', logging to {output_file}"
+
+    def read_vm_serial_console(self, vm_name: str, tail_lines: int = 50,
+                               offset_bytes: int = 0) -> Dict[str, Any]:
+        """Read the serial console log file for a VM."""
+        self._ensure_connected()
+        vm = self.find_vm(vm_name)
+        if not vm:
+            raise Exception(f"VM {vm_name} not found")
+
+        serial_file = None
+        for device in vm.config.hardware.device:
+            if isinstance(device, vim.vm.device.VirtualSerialPort):
+                if hasattr(device.backing, 'fileName'):
+                    serial_file = device.backing.fileName
+                    break
+
+        if not serial_file:
+            raise Exception(f"VM '{vm_name}' has no file-backed serial port")
+
+        data = self._download_datastore_file(serial_file)
+
+        if offset_bytes > 0:
+            data = data[offset_bytes:]
+
+        text = data.decode("utf-8", errors="replace")
+        total_bytes = offset_bytes + len(data)
+
+        if tail_lines > 0:
+            lines = text.splitlines()
+            text = "\n".join(lines[-tail_lines:])
+
+        return {
+            "vm_name": vm_name,
+            "serial_file": serial_file,
+            "content": text,
+            "offset_bytes": total_bytes,
+            "total_bytes_read": len(data),
+        }

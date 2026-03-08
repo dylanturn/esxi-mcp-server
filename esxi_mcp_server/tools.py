@@ -21,10 +21,10 @@ class ToolHandlers:
             if not self.manager.authenticated:
                 raise Exception("Unauthorized: API key required.")
     
-    def create_vm(self, name: str, cpu: int, memory: int, datastore: Optional[str] = None, network: Optional[str] = None, folder: Optional[str] = None, resource_pool: Optional[str] = None) -> str:
+    def create_vm(self, name: str, cpu: int, memory: int, datastore: Optional[str] = None, network: Optional[str] = None, folder: Optional[str] = None, resource_pool: Optional[str] = None, serial_console: bool = False) -> str:
         """Create a new virtual machine."""
         self._check_auth()
-        return self.manager.create_vm(name, cpu, memory, datastore, network, folder, resource_pool)
+        return self.manager.create_vm(name, cpu, memory, datastore, network, folder, resource_pool, serial_console)
 
     def clone_vm(self, template_name: str, new_name: str, folder: Optional[str] = None, resource_pool: Optional[str] = None) -> str:
         """Clone a virtual machine from a template."""
@@ -70,11 +70,27 @@ class ToolHandlers:
                         guest_id: str = "otherGuest", datastore: Optional[str] = None,
                         network: Optional[str] = None, thin_provisioned: bool = True,
                         annotation: Optional[str] = None, folder: Optional[str] = None,
-                        resource_pool: Optional[str] = None) -> str:
+                        resource_pool: Optional[str] = None, serial_console: bool = False) -> str:
         """Create a custom virtual machine with advanced options."""
         self._check_auth()
         return self.manager.create_vm_custom(name, cpu, memory, disk_size_gb, guest_id,
-                                            datastore, network, thin_provisioned, annotation, folder, resource_pool)
+                                            datastore, network, thin_provisioned, annotation, folder, resource_pool, serial_console)
+
+    def capture_vm_screenshot(self, vm_name: str) -> dict:
+        """Capture a screenshot of the VM console."""
+        self._check_auth()
+        return self.manager.capture_vm_screenshot(vm_name)
+
+    def add_vm_serial_port(self, vm_name: str, output_file: str = None) -> str:
+        """Add a file-backed serial port to a VM."""
+        self._check_auth()
+        return self.manager.add_vm_serial_port(vm_name, output_file)
+
+    def read_vm_serial_console(self, vm_name: str, tail_lines: int = 50,
+                               offset_bytes: int = 0) -> dict:
+        """Read the serial console log for a VM."""
+        self._check_auth()
+        return self.manager.read_vm_serial_console(vm_name, tail_lines, offset_bytes)
     
     def list_templates(self) -> list:
         """List all virtual machine templates."""
