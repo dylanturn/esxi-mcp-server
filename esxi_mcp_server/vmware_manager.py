@@ -27,6 +27,19 @@ class VMwareManager:
         self.authenticated = False   # Authentication flag for API key verification
         self._connect_vcenter()
 
+    @staticmethod
+    def _get_all_datastores(folder):
+        """Recursively collect all Datastore objects from a folder hierarchy."""
+        datastores = []
+        for child in folder.childEntity:
+            if isinstance(child, vim.Datastore):
+                datastores.append(child)
+            elif isinstance(child, vim.Folder):
+                datastores.extend(VMwareManager._get_all_datastores(child))
+            elif isinstance(child, vim.StoragePod):
+                datastores.extend(child.childEntity)
+        return datastores
+
     def _connect_vcenter(self):
         """Connect to vCenter/ESXi and retrieve main resource object references."""
         try:
@@ -88,22 +101,21 @@ class VMwareManager:
         self.resource_pool = compute_resource.resourcePool
         logging.info(f"Using resource pool: {self.resource_pool.name}")
 
-        # Retrieve datastore object
+        # Retrieve datastore object (optional — resolved lazily if not configured)
+        datastores = self._get_all_datastores(self.datacenter_obj.datastoreFolder)
         if self.config.datastore:
-            # Find specified datastore in the datacenter
-            self.datastore_obj = next((ds for ds in self.datacenter_obj.datastoreFolder.childEntity
-                                       if isinstance(ds, vim.Datastore) and ds.name == self.config.datastore), None)
+            self.datastore_obj = next((ds for ds in datastores
+                                       if ds.name == self.config.datastore), None)
             if not self.datastore_obj:
-                logging.error(f"Datastore named {self.config.datastore} not found")
-                raise Exception(f"Datastore {self.config.datastore} not found")
-        else:
-            # Default to the datastore with the largest available capacity
-            datastores = [ds for ds in self.datacenter_obj.datastoreFolder.childEntity if isinstance(ds, vim.Datastore)]
-            if not datastores:
-                raise Exception("No available datastore found in the datacenter")
-            # Select the one with the maximum free space
+                available = [ds.name for ds in datastores]
+                logging.error(f"Datastore named {self.config.datastore} not found. Available: {available}")
+                raise Exception(f"Datastore {self.config.datastore} not found. Available: {available}")
+            logging.info(f"Using datastore: {self.datastore_obj.name}")
+        elif datastores:
             self.datastore_obj = max(datastores, key=lambda ds: ds.summary.freeSpace)
-        logging.info(f"Using datastore: {self.datastore_obj.name}")
+            logging.info(f"Using datastore: {self.datastore_obj.name}")
+        else:
+            logging.warning("No datastore found at startup; operations requiring a datastore must specify one explicitly")
 
         # Retrieve network object (network or distributed virtual portgroup)
         if self.config.network:
@@ -111,11 +123,13 @@ class VMwareManager:
             networks = self.datacenter_obj.networkFolder.childEntity
             self.network_obj = next((net for net in networks if net.name == self.config.network), None)
             if not self.network_obj:
-                logging.error(f"Network {self.config.network} not found")
-                raise Exception(f"Network {self.config.network} not found")
-            logging.info(f"Using network: {self.network_obj.name}")
+                available = [net.name for net in networks]
+                logging.warning(f"Network '{self.config.network}' not found. Available: {available}. "
+                                "Operations requiring a network must specify one explicitly.")
+            else:
+                logging.info(f"Using network: {self.network_obj.name}")
         else:
-            self.network_obj = None  # If no network is specified, VM creation can choose to not connect to a network
+            self.network_obj = None
 
     def _ensure_connected(self):
         """Verify the vCenter session is alive and reconnect if necessary.
@@ -158,6 +172,22 @@ class VMwareManager:
             vm_list.append(vm.name)
         container.Destroy()
         return vm_list
+
+    def list_resource_pools(self) -> list:
+        """List all resource pools with their details."""
+        self._ensure_connected()
+        pools = []
+        container = self.content.viewManager.CreateContainerView(
+            self.datacenter_obj, [vim.ResourcePool], True)
+        for rp in container.view:
+            pool_info = {
+                "name": rp.name,
+                "cpu_limit": rp.config.cpuAllocation.limit,
+                "memory_limit": rp.config.memoryAllocation.limit,
+            }
+            pools.append(pool_info)
+        container.Destroy()
+        return pools
 
     def find_resource_pool(self, pool_name: str) -> Optional[vim.ResourcePool]:
         """Find a resource pool by name, searching the datacenter recursively."""
@@ -1087,13 +1117,23 @@ class VMwareManager:
         else:
             raise Exception("Failed to start program in VM")
 
-    def upload_file_to_vm(self, vm_name: str, local_file_path: str,
-                         remote_file_path: str,
+    def upload_file_to_vm(self, vm_name: str, remote_file_path: str,
+                         local_file_path: str = None,
+                         file_content_base64: str = None,
                          username: str = None,
                          password: str = None) -> str:
-        """Upload a file to a VM using VMware Tools."""
+        """Upload a file to a VM using VMware Tools.
+
+        Provide either local_file_path (path on the MCP server) or
+        file_content_base64 (base64-encoded file content, max ~1 MB).
+        """
         self._ensure_connected()
         import requests
+
+        if not local_file_path and not file_content_base64:
+            raise Exception("Either local_file_path or file_content_base64 must be provided.")
+        if local_file_path and file_content_base64:
+            raise Exception("Provide only one of local_file_path or file_content_base64, not both.")
 
         vm = self.find_vm(vm_name)
         if not vm:
@@ -1106,32 +1146,82 @@ class VMwareManager:
                 "VMware Tools is either not running or not installed.")
 
         creds = self._get_guest_credentials(username, password)
-        
-        # Read the local file
-        with open(local_file_path, 'rb') as f:
-            file_data = f.read()
-        
+
+        # Get file data from either source
+        if file_content_base64:
+            file_data = base64.b64decode(file_content_base64)
+            if len(file_data) > 1_048_576:
+                raise Exception("Base64 file content exceeds 1 MB limit. Use local_file_path for larger files.")
+        else:
+            with open(local_file_path, 'rb') as f:
+                file_data = f.read()
+
         # Get file manager
         file_manager = self.content.guestOperationsManager.fileManager
-        
+
         # Create file attributes
         file_attribute = vim.vm.guest.FileManager.FileAttributes()
-        
+
         # Initiate file transfer
         url = file_manager.InitiateFileTransferToGuest(
             vm, creds, remote_file_path, file_attribute, len(file_data), True)
-        
+
         # Fix the URL (replace wildcard with actual host)
         url = re.sub(r"^https://\*:", f"https://{self.config.vcenter_host}:", url)
-        
+
         # Upload the file
         resp = requests.put(url, data=file_data, verify=False)
-        
+
         if resp.status_code == 200:
             logging.info(f"File uploaded to VM '{vm_name}': {remote_file_path}")
             return f"Successfully uploaded file to {remote_file_path} in VM '{vm_name}'"
         else:
             raise Exception(f"Failed to upload file. HTTP status: {resp.status_code}")
+
+    def download_file_from_vm(self, vm_name: str, remote_file_path: str,
+                              username: str = None,
+                              password: str = None) -> dict:
+        """Download a file from a VM using VMware Tools.
+
+        Returns a dict with file_content_base64 (base64-encoded), size_bytes,
+        and a sha256 hex digest of the content.
+        """
+        self._ensure_connected()
+        import hashlib
+        import requests
+
+        vm = self.find_vm(vm_name)
+        if not vm:
+            raise Exception(f"VM {vm_name} not found")
+
+        tools_status = vm.guest.toolsStatus
+        if tools_status in ('toolsNotInstalled', 'toolsNotRunning'):
+            raise Exception(
+                "VMware Tools is either not running or not installed.")
+
+        creds = self._get_guest_credentials(username, password)
+
+        file_manager = self.content.guestOperationsManager.fileManager
+
+        file_transfer_info = file_manager.InitiateFileTransferFromGuest(
+            vm, creds, remote_file_path)
+
+        url = file_transfer_info.url
+        url = re.sub(r"^https://\*:", f"https://{self.config.vcenter_host}:", url)
+
+        resp = requests.get(url, verify=False)
+        if resp.status_code != 200:
+            raise Exception(f"Failed to download file. HTTP status: {resp.status_code}")
+
+        file_data = resp.content
+        sha256 = hashlib.sha256(file_data).hexdigest()
+
+        logging.info(f"File downloaded from VM '{vm_name}': {remote_file_path} ({len(file_data)} bytes)")
+        return {
+            "file_content_base64": base64.b64encode(file_data).decode("ascii"),
+            "size_bytes": len(file_data),
+            "sha256": sha256,
+        }
 
     def upload_file_to_datastore(self, datastore_name: str, local_file_path: str,
                                  remote_file_path: str) -> str:

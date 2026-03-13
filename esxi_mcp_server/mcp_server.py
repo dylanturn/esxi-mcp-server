@@ -7,12 +7,15 @@ from mcp import types
 from .tools import ToolHandlers
 
 
+from .config import Config
+
+
 def create_mcp_server() -> Server:
     """Create and initialize the MCP server."""
     return Server(name="VMware-MCP-Server", version="0.0.1")
 
 
-def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
+def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers, config: Config = None):
     """
     Register all MCP tool and resource handlers.
     
@@ -305,18 +308,22 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
             name="upload_file_to_vm",
             description=(
                 "Upload a file to a VM using VMware Tools. "
+                "Provide either local_file_path (a path on the MCP server host) or "
+                "file_content_base64 (base64-encoded content — keep files small, "
+                "under 1 MB). "
                 "If username/password are omitted, authenticates via SAML."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "vm_name": {"type": "string", "description": "Name of the VM"},
-                    "local_file_path": {"type": "string", "description": "Local file path to upload"},
+                    "local_file_path": {"type": "string", "description": "Local file path on the MCP server to upload (mutually exclusive with file_content_base64)"},
+                    "file_content_base64": {"type": "string", "description": "Base64-encoded file content to upload directly. Keep files small (under 1 MB). Mutually exclusive with local_file_path."},
                     "remote_file_path": {"type": "string", "description": "Destination path in guest OS"},
                     "username": {"type": "string", "description": "Guest OS username (optional with SAML)"},
                     "password": {"type": "string", "description": "Guest OS password (optional with SAML)"}
                 },
-                "required": ["vm_name", "local_file_path", "remote_file_path"]
+                "required": ["vm_name", "remote_file_path"]
             }
         ),
         "upload_file_to_datastore": types.Tool(
@@ -436,7 +443,69 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
             }
         )
     }
-    
+
+    # Experimental tools — only registered when experimental_tools is enabled
+    experimental_tools = {
+        "download_file_from_vm": types.Tool(
+            name="download_file_from_vm",
+            description=(
+                "[Experimental] Download a file from a VM using VMware Tools. "
+                "Returns the file as base64-encoded content along with its size "
+                "and SHA-256 hash. Best suited for small files (text configs, "
+                "scripts, logs). "
+                "If username/password are omitted, authenticates via SAML."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "vm_name": {"type": "string", "description": "Name of the VM"},
+                    "remote_file_path": {"type": "string", "description": "Path of the file in the guest OS to download"},
+                    "username": {"type": "string", "description": "Guest OS username (optional with SAML)"},
+                    "password": {"type": "string", "description": "Guest OS password (optional with SAML)"}
+                },
+                "required": ["vm_name", "remote_file_path"]
+            }
+        ),
+        "edit_file_on_vm": types.Tool(
+            name="edit_file_on_vm",
+            description=(
+                "[Experimental] Edit a file on a VM using targeted string "
+                "replacements. Each edit replaces the first exact occurrence of "
+                "old_string with new_string. Edits are applied sequentially — "
+                "later edits see the result of earlier ones. "
+                "You must supply the SHA-256 of the current file content (from "
+                "download_file_from_vm) to guard against stale edits. "
+                "If username/password are omitted, authenticates via SAML."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "vm_name": {"type": "string", "description": "Name of the VM"},
+                    "file_path": {"type": "string", "description": "Path of the file in the guest OS to edit"},
+                    "sha": {"type": "string", "description": "SHA-256 hex digest of the current file content (obtained from download_file_from_vm)"},
+                    "edits": {
+                        "type": "array",
+                        "description": "Ordered list of string-replacement edits to apply",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "old_string": {"type": "string", "description": "Exact string to find (first occurrence is replaced)"},
+                                "new_string": {"type": "string", "description": "Replacement string"}
+                            },
+                            "required": ["old_string", "new_string"]
+                        }
+                    },
+                    "username": {"type": "string", "description": "Guest OS username (optional with SAML)"},
+                    "password": {"type": "string", "description": "Guest OS password (optional with SAML)"}
+                },
+                "required": ["vm_name", "file_path", "sha", "edits"]
+            }
+        ),
+    }
+
+    if config and config.experimental_tools:
+        tools.update(experimental_tools)
+
     # Map tool names to their handler functions
     tool_handler_map = {
         "create_vm": lambda args: tool_handlers.create_vm(**args),
@@ -473,6 +542,8 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
         "capture_vm_screenshot": lambda args: tool_handlers.capture_vm_screenshot(**args),
         "add_vm_serial_port": lambda args: tool_handlers.add_vm_serial_port(**args),
         "read_vm_serial_console": lambda args: tool_handlers.read_vm_serial_console(**args),
+        "download_file_from_vm": lambda args: tool_handlers.download_file_from_vm(**args),
+        "edit_file_on_vm": lambda args: tool_handlers.edit_file_on_vm(**args),
     }
     
     resources = {
@@ -481,7 +552,31 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
             uri="vmstats://{vm_name}",
             description="Get CPU, memory, storage, network usage of a VM",
             mimeType="application/json"
-        )
+        ),
+        "networks": types.Resource(
+            name="networks",
+            uri="esxi://networks",
+            description="List all available networks (standard and distributed virtual portgroups)",
+            mimeType="application/json"
+        ),
+        "datastores": types.Resource(
+            name="datastores",
+            uri="esxi://datastores",
+            description="List all available datastores with capacity and free space",
+            mimeType="application/json"
+        ),
+        "datastoreClusters": types.Resource(
+            name="datastoreClusters",
+            uri="esxi://datastore-clusters",
+            description="List all datastore clusters (StoragePods) with capacity and member datastores",
+            mimeType="application/json"
+        ),
+        "resourcePools": types.Resource(
+            name="resourcePools",
+            uri="esxi://resource-pools",
+            description="List all resource pools with CPU and memory limits",
+            mimeType="application/json"
+        ),
     }
     
     # Register tool handlers using decorators
@@ -526,21 +621,34 @@ def register_handlers(mcp_server: Server, tool_handlers: ToolHandlers):
         """List all available resources."""
         return list(resources.values())
     
+    # Map static resource URIs to their handler functions
+    static_resource_handlers = {
+        "esxi://networks": lambda: tool_handlers.list_networks(),
+        "esxi://datastores": lambda: tool_handlers.list_datastores(),
+        "esxi://datastore-clusters": lambda: tool_handlers.list_datastore_clusters(),
+        "esxi://resource-pools": lambda: tool_handlers.list_resource_pools(),
+    }
+
     @mcp_server.read_resource()
     async def read_resource_handler(uri: str):
         """Handle resource reads."""
-        # Parse URI to extract resource name and parameters
-        for resource_name, resource in resources.items():
-            if uri.startswith(resource.uri.split("{")[0]):
-                # Extract parameters from URI
-                # For vmstats://{vm_name}, extract vm_name
-                if resource_name == "vmStats":
-                    vm_name = uri.replace("vmstats://", "")
-                    result = tool_handlers.vm_performance_resource(vm_name)
-                    # Return resource content
-                    return [types.TextContent(
-                        type="text",
-                        text=json.dumps(result, indent=2)
-                    )]
-        
+        uri_str = str(uri)
+
+        # Handle static resources
+        if uri_str in static_resource_handlers:
+            result = static_resource_handlers[uri_str]()
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(result, indent=2)
+            )]
+
+        # Handle parameterized resources
+        if uri_str.startswith("vmstats://"):
+            vm_name = uri_str.replace("vmstats://", "")
+            result = tool_handlers.vm_performance_resource(vm_name)
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(result, indent=2)
+            )]
+
         raise ValueError(f"Unknown resource: {uri}")

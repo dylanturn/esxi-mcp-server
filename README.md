@@ -163,6 +163,74 @@ When configuring this server in an MCP client (like Claude Desktop), use the fol
 }
 ```
 
+## Running with Docker
+
+The server can run inside a Docker container. This is the easiest way to deploy it without worrying about Python versions or dependencies.
+
+### Quick Start (Docker Compose)
+
+1. Copy the sample config and fill in your vCenter details:
+```bash
+cp config.yaml.sample config.yaml
+# Edit config.yaml with your vCenter host, user, and password
+```
+
+2. Start the server:
+```bash
+docker compose up -d
+```
+
+The MCP server will be available at `http://localhost:8080/message`.
+
+### Quick Start (Docker CLI)
+
+Build the image:
+```bash
+docker build -t esxi-mcp-server .
+```
+
+Run with a config file:
+```bash
+docker run -d \
+  --name esxi-mcp-server \
+  -p 8080:8080 \
+  -v $(pwd)/config.yaml:/app/config/config.yaml:ro \
+  -v $(pwd)/logs:/app/logs \
+  esxi-mcp-server
+```
+
+Or run with environment variables only (no config file needed):
+```bash
+docker run -d \
+  --name esxi-mcp-server \
+  -p 8080:8080 \
+  -e VCENTER_HOST=your-vcenter-ip \
+  -e VCENTER_USER=administrator@vsphere.local \
+  -e VCENTER_PASSWORD=your-password \
+  -e VCENTER_INSECURE=true \
+  -e MCP_API_KEY=your-api-key \
+  -v $(pwd)/logs:/app/logs \
+  esxi-mcp-server
+```
+
+To enable experimental tools in Docker, add:
+```bash
+-e MCP_EXPERIMENTAL_TOOLS=true
+```
+
+### Verifying the Container
+
+```bash
+# Check the container is running
+docker ps
+
+# View logs
+docker logs esxi-mcp-server
+
+# Check health status
+docker inspect --format='{{.State.Health.Status}}' esxi-mcp-server
+```
+
 ## API Interface
 
 ### Transport Protocols
@@ -238,6 +306,39 @@ X-API-Key: your-api-key
 }
 ```
 
+5. Upload File to VM (with base64 content)
+```json
+{
+    "vm_name": "vm-name",
+    "remote_file_path": "/tmp/hello.txt",
+    "file_content_base64": "SGVsbG8gV29ybGQh"
+}
+```
+
+### Experimental Tools
+
+Enable experimental tools by setting `experimental_tools: true` in your config or `MCP_EXPERIMENTAL_TOOLS=true` as an environment variable.
+
+6. Download File from VM
+```json
+{
+    "vm_name": "vm-name",
+    "remote_file_path": "/etc/hostname"
+}
+```
+
+7. Edit File on VM
+```json
+{
+    "vm_name": "vm-name",
+    "file_path": "/etc/motd",
+    "sha": "abc123...",
+    "edits": [
+        {"old_string": "Welcome", "new_string": "Hello"}
+    ]
+}
+```
+
 ### Resource Monitoring Interface
 
 Get VM performance data:
@@ -260,6 +361,7 @@ GET vmstats://{vm_name}
 | api_key | API access key | No | - |
 | log_file | Log file path | No | Console output |
 | log_level | Log level | No | INFO |
+| experimental_tools | Enable experimental tools | No | false |
 
 ## Project Structure
 
@@ -307,6 +409,7 @@ All configuration items support environment variable settings, following these n
 - MCP_API_KEY
 - MCP_LOG_FILE
 - MCP_LOG_LEVEL
+- MCP_EXPERIMENTAL_TOOLS
 
 ## Security Recommendations
 
@@ -329,6 +432,14 @@ MIT License
 Issues and Pull Requests are welcome!
 
 ## Changelog
+
+### v0.0.5
+- **upload_file_to_vm** now accepts base64-encoded content via `file_content_base64` parameter, allowing agents to upload files directly without needing a local path on the server
+- Added `experimental_tools` feature flag (`MCP_EXPERIMENTAL_TOOLS` env var)
+- **[Experimental]** `download_file_from_vm` — download files from a VM as base64 with SHA-256 hash
+- **[Experimental]** `edit_file_on_vm` — edit files on a VM using targeted string replacements with SHA-based conflict detection
+- Improved Dockerfile to include the full Python package and use `python -m esxi_mcp_server` entrypoint
+- Added Docker quick-start documentation to README
 
 ### v0.0.4
 - **BREAKING CHANGE**: Refactored project structure to follow Python best practices

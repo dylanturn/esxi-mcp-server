@@ -17,12 +17,15 @@ def setup_logging(config):
     log_level = getattr(logging, config.log_level.upper(), logging.INFO)
     logging.basicConfig(
         level=log_level,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        filename=config.log_file if config.log_file else None
+        format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+        filename=config.log_file if config.log_file else None,
+        force=True
     )
     if not config.log_file:
         # If no log file is specified, output logs to the console
         logging.getLogger().addHandler(logging.StreamHandler())
+    # Ensure MCP library loggers are visible at the configured level
+    logging.getLogger("mcp").setLevel(log_level)
 
 
 def main():
@@ -53,7 +56,7 @@ def main():
     # Create tool handlers and MCP server
     tool_handlers = ToolHandlers(manager, config)
     mcp_server = create_mcp_server()
-    register_handlers(mcp_server, tool_handlers)
+    register_handlers(mcp_server, tool_handlers, config)
     
     # Start MCP server with the selected transport
     if args.transport == "stdio":
